@@ -1,0 +1,44 @@
+# Build
+cpp/build*/
+test_build/
+
+# Deploy / packaging
+deploy/
+bin/
+*.exe
+*.evb
+GeoChecker_packed.exe
+
+# Dependencies
+node_modules/
+
+# IDE / tools
+.claude/
+.vscode/
+.idea/
+CMakeUserPresets.json
+
+# Temp files
+nul
+sfx_config.txt
+generate_evb.sh
+gen_evb.py
+package.json
+package-lock.json
+
+# Unrelated files
+photo.png
+аквпрк.txt
+Без имени2222.png
+readme.txt
+BUILD-WINDOWS.txt
+README-CPP.md
+
+# Windows build helpers (not needed in repo)
+cpp/build-windows-static.bat
+cpp/build-project-static.ps1
+cpp/build-qt-static.ps1
+cpp/g++_wrapper.bat
+cpp/CMakeLists_test.txt
+cpp/test_dropdown.cpp
+cpp/README.md

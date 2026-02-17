@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Geo Checker
+Comment=Geo Checker application
+Exec=geochecker
+Icon=geochecker
+Terminal=false
+Categories=Utility;
