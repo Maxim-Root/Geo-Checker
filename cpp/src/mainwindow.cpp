@@ -85,7 +85,8 @@ static QMap<QString, QMap<QString, QString>> translations = []() {
     t["ru"]["enter_domain"] = "Введите домен для поиска";
     t["ru"]["enter_geosite_tag"] = "Введите geosite:tag";
     t["ru"]["enter_geoip_tag"] = "Введите geoip:tag";
-    t["ru"]["no_results_to_copy"] = "Сначала получите результат поиска";
+    t["ru"]["no_results_to_copy"] = "Нет результата для копирования";
+    t["ru"]["no_results_to_save"] = "Нет результата для сохранения";
     t["ru"]["copied"] = "Результат скопирован в буфер обмена";
     t["ru"]["saved_to"] = "Сохранено: %1";
     t["ru"]["set_geosite_path"] = "Укажите путь к geosite.dat";
@@ -145,6 +146,8 @@ static QMap<QString, QMap<QString, QString>> translations = []() {
     t["en"]["choose_geosite"] = "Choose geosite.dat";
     t["en"]["choose_geoip"] = "Choose geoip.dat";
     t["en"]["all_files"] = "All files";
+    t["en"]["no_results_to_copy"] = "No results to copy";
+    t["en"]["no_results_to_save"] = "No results to save";
     return t;
 }();
 
@@ -1395,7 +1398,7 @@ void MainWindow::onCopyResult() {
 }
 
 void MainWindow::onSaveResult() {
-    if (current_result_text_.isEmpty()) { showMessage(this, trKey("info"), trKey("no_results_to_copy"), QMessageBox::Information); return; }
+    if (current_result_text_.isEmpty()) { showMessage(this, trKey("info"), trKey("no_results_to_save"), QMessageBox::Information); return; }
     QString path = QFileDialog::getSaveFileName(this, trKey("save_result"), QString(), "Text (*.txt);;All (*.*)");
     if (path.isEmpty()) return;
     QFile f(path);
