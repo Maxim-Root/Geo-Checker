@@ -12,6 +12,17 @@ message Domain {
   }
   Type type = 1;
   string value = 2;
+
+  message Attribute {
+    string key = 1;
+
+    oneof typed_value {
+      bool bool_value = 2;
+      int64 int_value = 3;
+    }
+  }
+
+  repeated Attribute attribute = 3;
 }
 
 // IP for routing decision (geoip)

@@ -40,6 +40,14 @@ int main(int argc, char* argv[]) {
         auto domains = geochecker::get_domains_from_geosite(data.get(), arg);
         std::cout << "Domains (" << domains.size() << "):\n\n";
         for (const auto& d : domains) std::cout << d << "\n";
+    } else if (cmd == "list") {
+        auto data = geochecker::load_geosite(path);
+        if (!data) {
+            std::cerr << "Failed to load geosite: " << path << "\n";
+            return 1;
+        }
+        auto cats = geochecker::list_geosite_categories(data.get());
+        for (const auto& c : cats) std::cout << c << "\n";
     } else if (cmd == "geoip") {
         auto data = geochecker::load_geoip(path);
         if (!data) {

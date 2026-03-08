@@ -27,6 +27,9 @@ std::vector<std::string> search_domain_in_geosite(const GeoSiteData* geosite, co
 // Get all domains from geosite tag (geosite:youtube etc)
 std::vector<std::string> get_domains_from_geosite(const GeoSiteData* geosite, const std::string& tag);
 
+// List all category names from geosite
+std::vector<std::string> list_geosite_categories(const GeoSiteData* geosite);
+
 // Resolve domain to IPv4 addresses
 std::vector<std::string> resolve_domain_to_ip(const std::string& domain, double timeout_sec = 2.0);
 

@@ -68,6 +68,38 @@ bool domain_matches(const std::string& domain_value, int domain_type, const std:
     }
 }
 
+// Parse tag like "ru@blocked", "ru-blocked-all", "geosite:ru@blocked" into {category, attribute}
+// Returns {category, attribute}. attribute is empty if no attribute specified.
+std::pair<std::string, std::string> parse_tag(const std::string& tag) {
+    std::string t = tag;
+    // Strip "geosite:" prefix
+    size_t pos = t.find("geosite:");
+    if (pos != std::string::npos) {
+        t = t.substr(pos + 8);
+    }
+    t = to_lower(t);
+    while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(0, 1);
+
+    // Check for "@" separator first (e.g. "ru@blocked")
+    size_t at_pos = t.find('@');
+    if (at_pos != std::string::npos) {
+        return {t.substr(0, at_pos), t.substr(at_pos + 1)};
+    }
+
+    // Check for "-" separator: try progressively shorter prefixes as category
+    // e.g. "ru-blocked-all" -> try "ru-blocked-all", "ru-blocked", "ru" as category
+    // We don't know the actual category name, so we'll return both parts
+    // and let the caller match against known categories
+    return {t, ""};
+}
+
+bool domain_has_attribute(const routercommon::Domain& d, const std::string& attr) {
+    for (const auto& a : d.attribute()) {
+        if (to_lower(a.key()) == attr) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 std::unique_ptr<GeoSiteData> load_geosite(const std::string& path) {
@@ -117,12 +149,27 @@ std::vector<std::string> search_domain_in_geosite(const GeoSiteData* geosite, co
 
     for (const auto& entry : list->entry()) {
         std::string category = to_lower(entry.country_code());
+        std::set<std::string> matched_attrs;
+        bool matched_base = false;
+
         for (const auto& d : entry.domain()) {
             if (domain_matches(d.value(), static_cast<int>(d.type()), domain_norm)) {
-                if (std::find(result.begin(), result.end(), category) == result.end()) {
-                    result.push_back(category);
+                matched_base = true;
+                for (const auto& a : d.attribute()) {
+                    matched_attrs.insert(to_lower(a.key()));
                 }
-                break;
+            }
+        }
+
+        if (matched_base) {
+            if (std::find(result.begin(), result.end(), category) == result.end()) {
+                result.push_back(category);
+            }
+            for (const auto& attr : matched_attrs) {
+                std::string sub = category + "@" + attr;
+                if (std::find(result.begin(), result.end(), sub) == result.end()) {
+                    result.push_back(sub);
+                }
             }
         }
     }
@@ -133,21 +180,52 @@ std::vector<std::string> get_domains_from_geosite(const GeoSiteData* geosite, co
     std::vector<std::string> domains;
     if (!geosite) return domains;
 
-    std::string tag_clean = tag;
-    size_t pos = tag_clean.find("geosite:");
-    if (pos != std::string::npos) {
-        tag_clean = tag_clean.substr(pos + 7);
-    }
-    tag_clean = to_lower(tag_clean);
-    while (!tag_clean.empty() && (tag_clean.front() == ' ' || tag_clean.front() == '\t')) {
-        tag_clean.erase(0, 1);
-    }
+    auto [category, attr] = parse_tag(tag);
 
     const auto* list = geosite->get();
+
+    // If no "@" and tag contains "-", first check if the full name exists as a category.
+    // Only if it doesn't, try splitting by "-" to find category + attribute.
+    if (attr.empty() && category.find('-') != std::string::npos) {
+        bool exact_found = false;
+        for (const auto& entry : list->entry()) {
+            if (to_lower(entry.country_code()) == category) {
+                exact_found = true;
+                break;
+            }
+        }
+        if (!exact_found) {
+            // Try progressively shorter prefixes as category name
+            std::string best_cat;
+            std::string best_attr;
+            for (size_t i = category.size(); i > 0; --i) {
+                if (i < category.size() && category[i] == '-') {
+                    std::string try_cat = category.substr(0, i);
+                    std::string try_attr = category.substr(i + 1);
+                    for (const auto& entry : list->entry()) {
+                        if (to_lower(entry.country_code()) == try_cat) {
+                            best_cat = try_cat;
+                            best_attr = try_attr;
+                            break;
+                        }
+                    }
+                    if (!best_cat.empty()) break;
+                }
+            }
+            if (!best_cat.empty()) {
+                category = best_cat;
+                attr = best_attr;
+            }
+        }
+    }
+
     for (const auto& entry : list->entry()) {
-        if (to_lower(entry.country_code()) != tag_clean) continue;
+        if (to_lower(entry.country_code()) != category) continue;
 
         for (const auto& d : entry.domain()) {
+            // If attribute filter is set, skip domains without that attribute
+            if (!attr.empty() && !domain_has_attribute(d, attr)) continue;
+
             int dt = static_cast<int>(d.type());
             if (dt == 0) domains.push_back("keyword:" + d.value());
             else if (dt == 1) domains.push_back("regexp:" + d.value());
@@ -243,6 +321,28 @@ std::vector<std::string> get_ips_from_geoip(const GeoIPData* geoip, const std::s
             if (!s.empty()) result.push_back(s);
         }
         break;
+    }
+    return result;
+}
+
+std::vector<std::string> list_geosite_categories(const GeoSiteData* geosite) {
+    std::vector<std::string> result;
+    if (!geosite) return result;
+    const auto* list = geosite->get();
+    for (const auto& entry : list->entry()) {
+        std::string cat = to_lower(entry.country_code());
+        result.push_back(cat);
+
+        // Collect unique attributes for this category
+        std::set<std::string> attrs;
+        for (const auto& d : entry.domain()) {
+            for (const auto& a : d.attribute()) {
+                attrs.insert(to_lower(a.key()));
+            }
+        }
+        for (const auto& a : attrs) {
+            result.push_back(cat + "@" + a);
+        }
     }
     return result;
 }

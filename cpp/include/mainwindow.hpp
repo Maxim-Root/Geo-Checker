@@ -5,6 +5,7 @@
 
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 #include <functional>
 #include <any>
 #include <memory>
@@ -45,6 +46,7 @@ private slots:
 
 protected:
     void showEvent(QShowEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     void buildUI();
@@ -55,6 +57,7 @@ private:
     bool ensureGeoSiteLoaded();
     bool ensureGeoIPLoaded();
     void setStatus(const QString& text, bool busy = false);
+    void setStatusTr(const char* key, const QString& arg = {}, bool busy = false);
     void setResultText(const QString& text, int tabIndex);
     void updateStats(int categories, int domains, int ips);
     void runBackground(const std::function<std::any()>& work,
@@ -64,6 +67,7 @@ private:
     /** Refresh fonts/styles of "Theme" and "Language" row and recalc sizes. Call after theme or language change. */
     void refreshSettingsRowStyles();
     void retranslateUi();
+    void rebuildResultText(int tab);
     bool isSystemDarkTheme() const;
     void updateThemeFromSystem();
     void setupSystemThemeListener();
@@ -75,6 +79,14 @@ private:
     QString loaded_geoip_path_;
     QString current_result_text_;
     QString lang_;  // "ru" or "en"
+    QString last_status_key_;
+    QString last_status_arg_;
+
+    // Result data for language-aware rebuild
+    enum ResultKind { RK_None, RK_Categories, RK_Domains, RK_DnsIPs, RK_GeoIPs };
+    ResultKind result_kind_[3] = {RK_None, RK_None, RK_None};
+    QStringList result_items_[3];
+    int result_extra_[3] = {0, 0, 0};
     bool dark_theme_ = true;
     bool language_row_fix_applied_ = false;
 

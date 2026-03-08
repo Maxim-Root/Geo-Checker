@@ -22,6 +22,8 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMap>
+#include <QMenu>
+#include <QContextMenuEvent>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
@@ -109,6 +111,7 @@ static QMap<QString, QMap<QString, QString>> translations = []() {
     t["ru"]["dns_error"] = "Ошибка DNS резолвинга";
     t["ru"]["ips_not_found"] = "IP не найдены";
     t["ru"]["dns_done"] = "DNS готово. Найдено IP: %1";
+    t["ru"]["dns_result_header"] = "Резолвинг по geosite: проверено доменов %1\nIP адресов: %2\n\n";
     t["ru"]["dns_starting"] = "Запускаю DNS резолвинг... Подождите.";
     t["ru"]["dns_running"] = "Выполняю DNS резолвинг...";
     t["ru"]["getting_geoip_ranges"] = "Получаю диапазоны из geoip...";
@@ -174,6 +177,7 @@ static QMap<QString, QMap<QString, QString>> translations = []() {
     t["en"]["dns_error"] = "DNS resolve error";
     t["en"]["ips_not_found"] = "IPs not found";
     t["en"]["dns_done"] = "DNS done. IPs found: %1";
+    t["en"]["dns_result_header"] = "Geosite resolve: domains checked %1\nIP addresses: %2\n\n";
     t["en"]["dns_starting"] = "Starting DNS resolve... Please wait.";
     t["en"]["dns_running"] = "DNS resolving...";
     t["en"]["getting_geoip_ranges"] = "Getting ranges from geoip...";
@@ -570,8 +574,12 @@ static QString lightStylesheet() {
             padding: 8px 12px; color: #1e293b; font-size: 14px; font-weight: 500; selection-background-color: #3b82f6;
         }
         QLineEdit:focus { border-color: #3b82f6; }
-        QFrame#resultsCard QTextEdit {
+        QFrame#textEditWrap {
             background-color: #f8fafc; border: 1px solid #d1d5db; border-radius: 8px;
+        }
+        QFrame#textEditWrap QWidget { background-color: #f8fafc; }
+        QFrame#textEditWrap QTextEdit {
+            background: transparent; border: none; border-radius: 0px;
             padding: 12px; color: #1e293b; font-family: "Cascadia Code", "Fira Code", "Consolas", "Monaco", monospace; font-size: 13px;
         }
         QPushButton#primary, QPushButton#secondary {
@@ -607,6 +615,7 @@ static QString lightStylesheet() {
         QLabel#subtitle { color: #64748b; font-size: 13px; font-weight: 500; }
         QLabel#settingsLabel { font-size: 13px; font-weight: 500; color: #475569; background: transparent; border: none; margin: 0; padding: 0; }
         QGroupBox { font-weight: 600; color: #1e293b; }
+        QFrame#progressWrap { background: transparent; border: none; }
         QProgressBar { border: 1px solid #c7d0dc; border-radius: 6px; text-align: center; }
         QProgressBar::chunk { background-color: #3b82f6; border-radius: 5px; }
         QLabel#statusLabel { color: #64748b; font-size: 13px; font-weight: 500; }
@@ -622,6 +631,68 @@ static QString lightStylesheet() {
         QMessageBox QPushButton:hover { background-color: #2563eb; }
         QFileDialog { background-color: #eef1f6; color: #0f172a; }
         QFileDialog QLabel { color: #0f172a; }
+
+        QMenu {
+            background-color: #f8fafc;
+            color: #1e293b;
+            border: 1px solid #cbd5e1;
+            padding: 4px;
+        }
+        QMenu::item {
+            padding: 6px 24px;
+            border-radius: 6px;
+        }
+        QMenu::item:selected {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #e2e8f0;
+            margin: 4px 8px;
+        }
+
+        QScrollBar:vertical {
+            background: #d5dae2;
+            width: 10px;
+            margin: 0px;
+            border-radius: 0px;
+        }
+        QScrollBar::handle:vertical {
+            background: #3b82f6;
+            border-radius: 5px;
+            min-height: 30px;
+            margin: 0px;
+        }
+        QScrollBar::handle:vertical:hover { background: #2563eb; }
+        QScrollBar::handle:vertical:pressed { background: #1d4ed8; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: none; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        QScrollBar:horizontal {
+            background: #d5dae2;
+            height: 10px;
+            margin: 0px;
+            border-radius: 0px;
+        }
+        QScrollBar::handle:horizontal {
+            background: #3b82f6;
+            border-radius: 5px;
+            min-width: 30px;
+            margin: 0px;
+        }
+        QScrollBar::handle:horizontal:hover { background: #2563eb; }
+        QScrollBar::handle:horizontal:pressed { background: #1d4ed8; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: none; }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+
+        QFrame#textEditWrap QScrollBar:vertical {
+            background: #d5dae2; width: 10px; margin: 0px; border-radius: 5px;
+        }
+        QFrame#textEditWrap QScrollBar:horizontal {
+            background: #d5dae2; height: 10px; margin: 0px; border-radius: 5px;
+        }
+
+        QTextEdit { padding-right: 4px; }
     )").arg(lang_ui::COMBO_MIN_WIDTH);
 }
 
@@ -640,7 +711,7 @@ static QString darkStylesheet() {
             margin: 4px 0px;
         }
         QFrame#resultsCard {
-            background-color: #2f333b; border: 1px solid #444b57; border-radius: 12px;
+            background-color: #2c3037; border: none; border-radius: 12px;
         }
         QFrame#statCard {
             background-color: #2b2f36; border: none; border-radius: 12px;
@@ -653,8 +724,13 @@ static QString darkStylesheet() {
             padding: 8px 12px; color: #f8fafc; font-size: 13px; selection-background-color: #3b82f6;
         }
         QLineEdit:focus { border-color: #3b82f6; }
-        QFrame#resultsCard QTextEdit {
+        QFrame#resultsCard QStackedWidget { background: transparent; }
+        QFrame#textEditWrap {
             background-color: #2c3037; border: 1px solid #3f4652; border-radius: 8px;
+        }
+        QFrame#textEditWrap QWidget { background-color: #2c3037; }
+        QFrame#textEditWrap QTextEdit {
+            background: transparent; border: none; border-radius: 0px;
             padding: 12px; color: #e2e8f0; font-family: Consolas, monospace; font-size: 13px;
         }
         QPushButton#primary, QPushButton#secondary {
@@ -690,7 +766,8 @@ static QString darkStylesheet() {
         QLabel#subtitle { color: #94a3b8; font-size: 13px; }
         QLabel#settingsLabel { font-size: 13px; font-weight: 500; color: #a6a8ad; background: transparent; border: none; margin: 0; padding: 0; }
         QGroupBox { font-weight: bold; color: #f8fafc; }
-        QProgressBar { border: 1px solid #3c4149; border-radius: 6px; text-align: center; }
+        QFrame#progressWrap { background: transparent; border: none; }
+        QProgressBar { background-color: #2a2d31; border: 1px solid #3c4149; border-radius: 6px; text-align: center; }
         QProgressBar::chunk { background-color: #3b82f6; border-radius: 5px; }
         QLabel#statusLabel { color: #9ea4ae; }
         QMessageBox, QDialog {
@@ -705,6 +782,71 @@ static QString darkStylesheet() {
         QMessageBox QPushButton:hover { background-color: #2563eb; }
         QFileDialog { background-color: #232529; color: #f8fafc; }
         QFileDialog QLabel { color: #f8fafc; }
+
+        QMenu {
+            background-color: #2a2d31;
+            color: #e2e8f0;
+            border: 1px solid #3c4149;
+            padding: 4px;
+        }
+        QMenu::item {
+            padding: 6px 24px;
+            border-radius: 6px;
+        }
+        QMenu::item:selected {
+            background-color: #3b82f6;
+            color: #ffffff;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #3c4149;
+            margin: 4px 8px;
+        }
+        QMenu::icon {
+            padding-left: 8px;
+        }
+
+        QScrollBar:vertical {
+            background: #3a3f48;
+            width: 10px;
+            margin: 0px;
+            border-radius: 0px;
+        }
+        QScrollBar::handle:vertical {
+            background: #3b82f6;
+            border-radius: 5px;
+            min-height: 40px;
+            margin: 0px;
+        }
+        QScrollBar::handle:vertical:hover { background: #2563eb; }
+        QScrollBar::handle:vertical:pressed { background: #1d4ed8; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: none; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        QScrollBar:horizontal {
+            background: #3a3f48;
+            height: 10px;
+            margin: 0px;
+            border-radius: 0px;
+        }
+        QScrollBar::handle:horizontal {
+            background: #3b82f6;
+            border-radius: 5px;
+            min-width: 40px;
+            margin: 0px;
+        }
+        QScrollBar::handle:horizontal:hover { background: #2563eb; }
+        QScrollBar::handle:horizontal:pressed { background: #1d4ed8; }
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; background: none; }
+        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+
+        QFrame#textEditWrap QScrollBar:vertical {
+            background: #3a3f48; width: 10px; margin: 0px; border-radius: 5px;
+        }
+        QFrame#textEditWrap QScrollBar:horizontal {
+            background: #3a3f48; height: 10px; margin: 0px; border-radius: 5px;
+        }
+
+        QTextEdit { padding-right: 4px; }
     )").arg(lang_ui::COMBO_MIN_WIDTH);
 }
 
@@ -1038,10 +1180,16 @@ void MainWindow::buildUI() {
     progress_->setMaximum(0);
     progress_->setFixedWidth(220);
     progress_->setVisible(false);
+    auto* progressWrap = new QFrame;
+    progressWrap->setObjectName("progressWrap");
+    progressWrap->setFixedSize(220, 18);
+    auto* pwl = new QHBoxLayout(progressWrap);
+    pwl->setContentsMargins(0, 0, 0, 0);
+    pwl->addWidget(progress_);
     auto* statusRow = new QHBoxLayout;
     statusRow->addWidget(status_label_);
     statusRow->addStretch();
-    statusRow->addWidget(progress_);
+    statusRow->addWidget(progressWrap);
     mal->addLayout(statusRow);
 
     auto* queryCard = new QFrame;
@@ -1123,15 +1271,28 @@ void MainWindow::buildUI() {
     rcl->addLayout(tabRow);
 
     results_stack_ = new QStackedWidget;
-    result_categories_ = new QTextEdit;
-    result_categories_->setReadOnly(true);
-    result_domains_ = new QTextEdit;
-    result_domains_->setReadOnly(true);
-    result_ips_ = new QTextEdit;
-    result_ips_->setReadOnly(true);
-    results_stack_->addWidget(result_categories_);
-    results_stack_->addWidget(result_domains_);
-    results_stack_->addWidget(result_ips_);
+
+    auto wrapTextEdit = [&](QTextEdit*& te) -> QFrame* {
+        te = new QTextEdit;
+        te->setReadOnly(true);
+        te->viewport()->installEventFilter(this);
+        auto* frame = new QFrame;
+        frame->setObjectName("textEditWrap");
+        auto* lay = new QVBoxLayout(frame);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->addWidget(te);
+        return frame;
+    };
+
+    results_stack_->addWidget(wrapTextEdit(result_categories_));
+    results_stack_->addWidget(wrapTextEdit(result_domains_));
+    results_stack_->addWidget(wrapTextEdit(result_ips_));
+
+    domain_entry_->installEventFilter(this);
+    geosite_tag_entry_->installEventFilter(this);
+    geoip_tag_entry_->installEventFilter(this);
+    geosite_entry_->installEventFilter(this);
+    geoip_entry_->installEventFilter(this);
     rcl->addWidget(results_stack_, 1);
     mal->addWidget(resultsCard, 1);
 
@@ -1161,6 +1322,8 @@ void MainWindow::onLanguageChange(int) {
     btn_right_spacer_->setFixedWidth(std::max(0, lang_ui::SPACE_BTN_RIGHT));
     retranslateUi();
     refreshSettingsRowStyles();
+    if (!last_status_key_.isEmpty())
+        setStatusTr(last_status_key_.toUtf8().constData(), last_status_arg_);
 }
 
 void MainWindow::retranslateUi() {
@@ -1201,6 +1364,7 @@ void MainWindow::retranslateUi() {
     tab_cat_btn_->setText(trKey("tab_categories"));
     tab_dom_btn_->setText(trKey("tab_domains"));
     tab_ip_btn_->setText(trKey("tab_ip"));
+    for (int i = 0; i < 3; ++i) rebuildResultText(i);
 }
 
 void MainWindow::onTabCategories() { active_tab_ = 0; results_stack_->setCurrentIndex(0); refreshTabStyles(); current_result_text_ = result_categories_->toPlainText(); }
@@ -1255,6 +1419,40 @@ void MainWindow::showEvent(QShowEvent* event) {
     }
 }
 
+bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    if (event->type() == QEvent::ContextMenu) {
+        auto* cme = static_cast<QContextMenuEvent*>(event);
+        QMenu* menu = nullptr;
+        if (auto* te = qobject_cast<QTextEdit*>(obj))
+            menu = te->createStandardContextMenu();
+        else if (auto* te = qobject_cast<QTextEdit*>(obj->parent()))
+            menu = te->createStandardContextMenu();
+        else if (auto* le = qobject_cast<QLineEdit*>(obj))
+            menu = le->createStandardContextMenu();
+        if (menu) {
+            menu->setAttribute(Qt::WA_TranslucentBackground);
+            menu->setWindowFlag(Qt::FramelessWindowHint);
+            menu->setWindowFlag(Qt::NoDropShadowWindowHint);
+            if (lang_ == "ru") {
+                for (auto* action : menu->actions()) {
+                    QString t = action->text().remove('&');
+                    if (t.contains("Undo"))             action->setText(QString::fromUtf8("Отменить"));
+                    else if (t.contains("Redo"))        action->setText(QString::fromUtf8("Повторить"));
+                    else if (t.contains("Cut"))         action->setText(QString::fromUtf8("Вырезать"));
+                    else if (t.contains("Copy"))        action->setText(QString::fromUtf8("Копировать"));
+                    else if (t.contains("Paste"))       action->setText(QString::fromUtf8("Вставить"));
+                    else if (t.contains("Delete"))      action->setText(QString::fromUtf8("Удалить"));
+                    else if (t.contains("Select All"))  action->setText(QString::fromUtf8("Выделить всё"));
+                }
+            }
+            menu->exec(cme->globalPos());
+            delete menu;
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(obj, event);
+}
+
 void MainWindow::applyLanguage() {
     geoLog("applyLanguage", "lang_=" + lang_);
     language_combo_->blockSignals(true);
@@ -1270,6 +1468,15 @@ void MainWindow::applyLanguage() {
 void MainWindow::setStatus(const QString& text, bool busy) {
     status_label_->setText(text);
     progress_->setVisible(busy);
+    last_status_key_.clear();
+    last_status_arg_.clear();
+}
+
+void MainWindow::setStatusTr(const char* key, const QString& arg, bool busy) {
+    last_status_key_ = key;
+    last_status_arg_ = arg;
+    status_label_->setText(arg.isEmpty() ? trKey(key) : trKey(key).arg(arg));
+    progress_->setVisible(busy);
 }
 
 void MainWindow::setResultText(const QString& text, int tabIndex) {
@@ -1279,6 +1486,43 @@ void MainWindow::setResultText(const QString& text, int tabIndex) {
     else if (tabIndex == 1) { result_domains_->setPlainText(text); results_stack_->setCurrentIndex(1); }
     else { result_ips_->setPlainText(text); results_stack_->setCurrentIndex(2); }
     refreshTabStyles();
+}
+
+void MainWindow::rebuildResultText(int tab) {
+    if (tab < 0 || tab > 2 || result_kind_[tab] == RK_None) return;
+    const auto& items = result_items_[tab];
+    QString output;
+
+    switch (result_kind_[tab]) {
+    case RK_Categories:
+        for (const auto& c : items) output += c + "\n";
+        if (output.isEmpty()) output = trKey("not_found");
+        break;
+    case RK_Domains: {
+        QString body;
+        for (const auto& d : items) body += d + "\n";
+        output = trKey("domains_count").arg(items.size()) + "\n\n" + (body.isEmpty() ? trKey("empty_list") : body);
+        break;
+    }
+    case RK_DnsIPs: {
+        output = trKey("dns_result_header").arg(result_extra_[tab]).arg(items.size());
+        for (const auto& ip : items) output += ip + "\n";
+        if (items.isEmpty()) output += trKey("ips_not_found");
+        break;
+    }
+    case RK_GeoIPs: {
+        QString body;
+        for (const auto& ip : items) body += ip + "\n";
+        output = trKey("ip_cidr_count").arg(items.size()) + "\n\n" + (body.isEmpty() ? trKey("empty_list") : body);
+        break;
+    }
+    default: return;
+    }
+
+    if (tab == 0) result_categories_->setPlainText(output);
+    else if (tab == 1) result_domains_->setPlainText(output);
+    else result_ips_->setPlainText(output);
+    if (active_tab_ == tab) current_result_text_ = output;
 }
 
 void MainWindow::updateStats(int categories, int domains, int ips) {
@@ -1292,10 +1536,10 @@ bool MainWindow::ensureGeoSiteLoaded() {
     if (path.isEmpty()) { showMessage(this, trKey("warning"), trKey("set_geosite_path"), QMessageBox::Warning); return false; }
     if (!QFileInfo::exists(path)) { showMessage(this, trKey("error"), trKey("file_not_found").arg(path), QMessageBox::Critical); return false; }
     if (loaded_geosite_path_ == path && geosite_data_) return true;
-    setStatus(trKey("loading_geosite"), true);
+    setStatusTr("loading_geosite", {}, true);
     QCoreApplication::processEvents();
     geosite_data_ = load_geosite(path.toStdString());
-    setStatus(trKey("ready"));
+    setStatusTr("ready");
     if (!geosite_data_) { showMessage(this, trKey("error"), trKey("load_geosite_failed").arg(path), QMessageBox::Critical); return false; }
     loaded_geosite_path_ = path;
     return true;
@@ -1306,10 +1550,10 @@ bool MainWindow::ensureGeoIPLoaded() {
     if (path.isEmpty()) { showMessage(this, trKey("warning"), trKey("set_geoip_path"), QMessageBox::Warning); return false; }
     if (!QFileInfo::exists(path)) { showMessage(this, trKey("error"), trKey("file_not_found").arg(path), QMessageBox::Critical); return false; }
     if (loaded_geoip_path_ == path && geoip_data_) return true;
-    setStatus(trKey("loading_geoip"), true);
+    setStatusTr("loading_geoip", {}, true);
     QCoreApplication::processEvents();
     geoip_data_ = load_geoip(path.toStdString());
-    setStatus(trKey("ready"));
+    setStatusTr("ready");
     if (!geoip_data_) { showMessage(this, trKey("error"), trKey("load_geoip_failed").arg(path), QMessageBox::Critical); return false; }
     loaded_geoip_path_ = path;
     return true;
@@ -1343,38 +1587,45 @@ void MainWindow::onSearchDomain() {
     QString domain = domain_entry_->text().trimmed();
     if (domain.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_domain"), QMessageBox::Information); return; }
     if (!ensureGeoSiteLoaded()) return;
-    setStatus(trKey("searching_categories"));
+    setStatusTr("searching_categories");
     auto cats = search_domain_in_geosite(geosite_data_.get(), domain.toStdString());
-    QString output;
-    for (const auto& c : cats) output += QString::fromStdString("geosite: " + c + "\n");
-    if (output.isEmpty()) output = trKey("not_found");
-    setResultText(output, 0);
+    result_kind_[0] = RK_Categories;
+    result_items_[0].clear();
+    for (const auto& c : cats) result_items_[0] << QString::fromStdString("geosite:" + c);
+    rebuildResultText(0);
+    results_stack_->setCurrentIndex(0);
+    active_tab_ = 0;
+    current_result_text_ = result_categories_->toPlainText();
+    refreshTabStyles();
     updateStats(static_cast<int>(cats.size()), -1, -1);
-    setStatus(trKey("categories_found").arg(cats.size()));
+    setStatusTr("categories_found", QString::number(cats.size()));
 }
 
 void MainWindow::onGetDomains() {
     QString tag = geosite_tag_entry_->text().trimmed();
     if (tag.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_geosite_tag"), QMessageBox::Information); return; }
     if (!ensureGeoSiteLoaded()) return;
-    setStatus(trKey("getting_domains"));
+    setStatusTr("getting_domains");
     auto domains = get_domains_from_geosite(geosite_data_.get(), tag.toStdString());
-    QString body;
-    size_t limit = 1200;
-    for (size_t i = 0; i < std::min(domains.size(), limit); ++i) body += QString::fromStdString(domains[i] + "\n");
-    if (domains.size() > limit) body += "\n" + trKey("and_more").arg(domains.size() - limit);
-    QString output = trKey("domains_count").arg(domains.size()) + "\n\n" + (body.isEmpty() ? trKey("empty_list") : body);
-    setResultText(output, 1);
+    result_kind_[1] = RK_Domains;
+    result_items_[1].clear();
+    for (const auto& d : domains) result_items_[1] << QString::fromStdString(d);
+    rebuildResultText(1);
+    results_stack_->setCurrentIndex(1);
+    active_tab_ = 1;
+    current_result_text_ = result_domains_->toPlainText();
+    refreshTabStyles();
     updateStats(-1, static_cast<int>(domains.size()), -1);
-    setStatus(trKey("domains_received").arg(domains.size()));
+    setStatusTr("domains_received", QString::number(domains.size()));
 }
 
 void MainWindow::onGetIPsFromDNS() {
     QString tag = geosite_tag_entry_->text().trimmed();
     if (tag.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_geosite_tag"), QMessageBox::Information); return; }
     if (!ensureGeoSiteLoaded()) return;
-    setResultText(trKey("dns_starting"), 2);
-    setStatus(trKey("dns_running"), true);
+    dns_btn_->setEnabled(false);
+    if (result_ips_->toPlainText().isEmpty()) setResultText(trKey("dns_starting"), 2);
+    setStatusTr("dns_running", {}, true);
     runBackground(
         [this, tag]() -> std::any {
             auto domains = get_domains_from_geosite(geosite_data_.get(), tag.toStdString());
@@ -1395,17 +1646,23 @@ void MainWindow::onGetIPsFromDNS() {
             return DnsResult{static_cast<int>(resolvable.size()), sorted};
         },
         [this](std::any result, const QString& err) {
+            dns_btn_->setEnabled(true);
             setStatus(QString(), false);
-            if (!err.isEmpty()) { setResultText(trKey("error") + ": " + err, 2); setStatus(trKey("dns_error")); return; }
+            if (!err.isEmpty()) { setResultText(trKey("error") + ": " + err, 2); setStatusTr("dns_error"); return; }
             try {
                 auto r = std::any_cast<DnsResult>(result);
-                QString output = QString("Резолвинг по geosite: проверено доменов %1\nIP адресов: %2\n\n").arg(r.checked).arg(r.ips.size());
-                for (const auto& ip : r.ips) output += QString::fromStdString(ip + "\n");
-                if (r.ips.empty()) output += trKey("ips_not_found");
-                setResultText(output, 2);
+                result_kind_[2] = RK_DnsIPs;
+                result_extra_[2] = r.checked;
+                result_items_[2].clear();
+                for (const auto& ip : r.ips) result_items_[2] << QString::fromStdString(ip);
+                rebuildResultText(2);
+                results_stack_->setCurrentIndex(2);
+                active_tab_ = 2;
+                current_result_text_ = result_ips_->toPlainText();
+                refreshTabStyles();
                 updateStats(-1, -1, static_cast<int>(r.ips.size()));
-                setStatus(trKey("dns_done").arg(r.ips.size()));
-            } catch (...) { setStatus(trKey("dns_error")); }
+                setStatusTr("dns_done", QString::number(r.ips.size()));
+            } catch (...) { setStatusTr("dns_error"); }
         });
 }
 
@@ -1413,22 +1670,24 @@ void MainWindow::onGetIPsFromGeoIP() {
     QString tag = geoip_tag_entry_->text().trimmed();
     if (tag.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_geoip_tag"), QMessageBox::Information); return; }
     if (!ensureGeoIPLoaded()) return;
-    setStatus(trKey("getting_geoip_ranges"));
+    setStatusTr("getting_geoip_ranges");
     auto ips = get_ips_from_geoip(geoip_data_.get(), tag.toStdString());
-    QString body;
-    size_t limit = 1200;
-    for (size_t i = 0; i < std::min(ips.size(), limit); ++i) body += QString::fromStdString(ips[i] + "\n");
-    if (ips.size() > limit) body += "\n" + trKey("and_more").arg(ips.size() - limit);
-    QString output = trKey("ip_cidr_count").arg(ips.size()) + "\n\n" + (body.isEmpty() ? trKey("empty_list") : body);
-    setResultText(output, 2);
+    result_kind_[2] = RK_GeoIPs;
+    result_items_[2].clear();
+    for (const auto& ip : ips) result_items_[2] << QString::fromStdString(ip);
+    rebuildResultText(2);
+    results_stack_->setCurrentIndex(2);
+    active_tab_ = 2;
+    current_result_text_ = result_ips_->toPlainText();
+    refreshTabStyles();
     updateStats(-1, -1, static_cast<int>(ips.size()));
-    setStatus(trKey("ranges_received").arg(ips.size()));
+    setStatusTr("ranges_received", QString::number(ips.size()));
 }
 
 void MainWindow::onCopyResult() {
     if (current_result_text_.isEmpty()) { showMessage(this, trKey("info"), trKey("no_results_to_copy"), QMessageBox::Information); return; }
     QApplication::clipboard()->setText(current_result_text_);
-    setStatus(trKey("copied"));
+    setStatusTr("copied");
 }
 
 void MainWindow::onSaveResult() {
@@ -1436,7 +1695,7 @@ void MainWindow::onSaveResult() {
     QString path = QFileDialog::getSaveFileName(this, trKey("save_result"), QString(), "Text (*.txt);;All (*.*)");
     if (path.isEmpty()) return;
     QFile f(path);
-    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) { f.write(current_result_text_.toUtf8()); setStatus(trKey("saved_to").arg(path)); }
+    if (f.open(QIODevice::WriteOnly | QIODevice::Text)) { f.write(current_result_text_.toUtf8()); setStatusTr("saved_to", path); }
 }
 
 } // namespace geochecker
