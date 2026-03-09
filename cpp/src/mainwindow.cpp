@@ -40,6 +40,8 @@
 #include <QStackedWidget>
 #include <QTextEdit>
 #include <QTimer>
+#include <QPropertyAnimation>
+#include <QScrollBar>
 #include <QVBoxLayout>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
 #include <QStyleHints>
@@ -53,6 +55,39 @@
 #include <thread>
 
 namespace geochecker {
+
+class SmoothScrollTextEdit : public QTextEdit {
+    Q_OBJECT
+public:
+    using QTextEdit::QTextEdit;
+protected:
+    void wheelEvent(QWheelEvent* e) override {
+        const int delta = e->angleDelta().y();
+        if (delta == 0) { QTextEdit::wheelEvent(e); return; }
+        if (!anim_ || anim_->state() != QAbstractAnimation::Running)
+            target_value_ = verticalScrollBar()->value();
+        target_value_ -= delta;
+        auto* bar = verticalScrollBar();
+        target_value_ = qBound(bar->minimum(), target_value_, bar->maximum());
+        if (!anim_) {
+            anim_ = new QPropertyAnimation(bar, "value", this);
+            anim_->setEasingCurve(QEasingCurve::OutCubic);
+        }
+        anim_->stop();
+        anim_->setDuration(300);
+        anim_->setStartValue(bar->value());
+        anim_->setEndValue(target_value_);
+        anim_->start();
+        e->accept();
+    }
+    void showEvent(QShowEvent* e) override {
+        QTextEdit::showEvent(e);
+        target_value_ = verticalScrollBar()->value();
+    }
+private:
+    QPropertyAnimation* anim_ = nullptr;
+    int target_value_ = 0;
+};
 
 struct DnsResult {
     int checked;
@@ -580,7 +615,7 @@ static QString lightStylesheet() {
         QFrame#textEditWrap QWidget { background-color: #f8fafc; }
         QFrame#textEditWrap QTextEdit {
             background: transparent; border: none; border-radius: 0px;
-            padding: 12px; color: #1e293b; font-family: "Cascadia Code", "Fira Code", "Consolas", "Monaco", monospace; font-size: 13px;
+            padding: 6px 12px; color: #1e293b; font-family: "Cascadia Code", "Fira Code", "Consolas", "Monaco", monospace; font-size: 13px;
             selection-background-color: #3b82f6; selection-color: #ffffff;
         }
         QPushButton#primary, QPushButton#secondary {
@@ -732,7 +767,7 @@ static QString darkStylesheet() {
         QFrame#textEditWrap QWidget { background-color: #2c3037; }
         QFrame#textEditWrap QTextEdit {
             background: transparent; border: none; border-radius: 0px;
-            padding: 12px; color: #e2e8f0; font-family: Consolas, monospace; font-size: 13px;
+            padding: 6px 12px; color: #e2e8f0; font-family: Consolas, monospace; font-size: 13px;
             selection-background-color: #3b82f6; selection-color: #ffffff;
         }
         QPushButton#primary, QPushButton#secondary {
@@ -1276,13 +1311,13 @@ void MainWindow::buildUI() {
     results_stack_ = new QStackedWidget;
 
     auto wrapTextEdit = [&](QTextEdit*& te) -> QFrame* {
-        te = new QTextEdit;
+        te = new SmoothScrollTextEdit;
         te->setReadOnly(true);
         te->viewport()->installEventFilter(this);
         auto* frame = new QFrame;
         frame->setObjectName("textEditWrap");
         auto* lay = new QVBoxLayout(frame);
-        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setContentsMargins(0, 6, 0, 6);
         lay->addWidget(te);
         return frame;
     };
@@ -1702,3 +1737,5 @@ void MainWindow::onSaveResult() {
 }
 
 } // namespace geochecker
+
+#include "mainwindow.moc"
