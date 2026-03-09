@@ -18,7 +18,7 @@ Proxy clients use `geosite.dat` and `geoip.dat` files to route traffic by domain
 - Dark / Light / System theme
 - English and Russian interface
 - Parallel domain search across all categories
-- Single portable `.exe` — no installation, no DLLs
+- Single portable `exe` — no installation, no DLLs
 - GUI (Qt6) and CLI modes
 
 ## Download
