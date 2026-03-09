@@ -11,7 +11,7 @@
 #include <memory>
 
 class QLineEdit;
-class QTextEdit;
+class QPlainTextEdit;
 class QLabel;
 class QTimer;
 class QProgressBar;
@@ -68,6 +68,7 @@ private:
     void refreshSettingsRowStyles();
     void retranslateUi();
     void rebuildResultText(int tab);
+    void setOperationButtonsEnabled(bool enabled);
     bool isSystemDarkTheme() const;
     void updateThemeFromSystem();
     void setupSystemThemeListener();
@@ -89,6 +90,7 @@ private:
     int result_extra_[3] = {0, 0, 0};
     bool dark_theme_ = true;
     bool language_row_fix_applied_ = false;
+    bool bg_busy_ = false;
 
     class QComboBox* theme_combo_;
     class QComboBox* language_combo_;
@@ -135,9 +137,9 @@ private:
     QProgressBar* progress_;
     QTimer* system_theme_timer_ = nullptr;
     QMetaObject::Connection system_theme_connection_;
-    QTextEdit* result_categories_;
-    QTextEdit* result_domains_;
-    QTextEdit* result_ips_;
+    QPlainTextEdit* result_categories_;
+    QPlainTextEdit* result_domains_;
+    QPlainTextEdit* result_ips_;
 };
 
 } // namespace geochecker

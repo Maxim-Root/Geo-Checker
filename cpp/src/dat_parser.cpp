@@ -24,6 +24,8 @@ namespace geochecker {
 
 namespace {
 
+// ---- string helpers ----
+
 std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -68,11 +70,8 @@ bool domain_matches(const std::string& domain_value, int domain_type, const std:
     }
 }
 
-// Parse tag like "ru@blocked", "ru-blocked-all", "geosite:ru@blocked" into {category, attribute}
-// Returns {category, attribute}. attribute is empty if no attribute specified.
 std::pair<std::string, std::string> parse_tag(const std::string& tag) {
     std::string t = tag;
-    // Strip "geosite:" prefix
     size_t pos = t.find("geosite:");
     if (pos != std::string::npos) {
         t = t.substr(pos + 8);
@@ -80,16 +79,10 @@ std::pair<std::string, std::string> parse_tag(const std::string& tag) {
     t = to_lower(t);
     while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(0, 1);
 
-    // Check for "@" separator first (e.g. "ru@blocked")
     size_t at_pos = t.find('@');
     if (at_pos != std::string::npos) {
         return {t.substr(0, at_pos), t.substr(at_pos + 1)};
     }
-
-    // Check for "-" separator: try progressively shorter prefixes as category
-    // e.g. "ru-blocked-all" -> try "ru-blocked-all", "ru-blocked", "ru" as category
-    // We don't know the actual category name, so we'll return both parts
-    // and let the caller match against known categories
     return {t, ""};
 }
 
@@ -100,7 +93,94 @@ bool domain_has_attribute(const routercommon::Domain& d, const std::string& attr
     return false;
 }
 
+// ---- protobuf wire format helpers ----
+// Used to scan .dat files and build a lightweight index without full parsing.
+
+bool decode_varint(const uint8_t* data, size_t size, size_t& pos, uint64_t& value) {
+    value = 0;
+    unsigned shift = 0;
+    while (pos < size) {
+        uint8_t byte = data[pos++];
+        value |= static_cast<uint64_t>(byte & 0x7F) << shift;
+        if ((byte & 0x80) == 0) return true;
+        shift += 7;
+        if (shift >= 64) return false;
+    }
+    return false;
+}
+
+bool skip_wire_field(const uint8_t* data, size_t size, size_t& pos, int wire_type) {
+    switch (wire_type) {
+    case 0: { uint64_t v; return decode_varint(data, size, pos, v); }
+    case 1: pos += 8; return pos <= size;
+    case 2: {
+        uint64_t len;
+        if (!decode_varint(data, size, pos, len)) return false;
+        pos += static_cast<size_t>(len);
+        return pos <= size;
+    }
+    case 5: pos += 4; return pos <= size;
+    default: return false;
+    }
+}
+
+// Extract string field 1 (country_code) from serialized GeoSite/GeoIP bytes
+std::string extract_country_code(const uint8_t* data, size_t size) {
+    size_t pos = 0;
+    while (pos < size) {
+        uint64_t tag;
+        if (!decode_varint(data, size, pos, tag)) break;
+        uint32_t field = static_cast<uint32_t>(tag >> 3);
+        int wire = static_cast<int>(tag & 0x07);
+        if (field == 1 && wire == 2) {
+            uint64_t len;
+            if (!decode_varint(data, size, pos, len)) break;
+            if (pos + len > size) break;
+            return std::string(reinterpret_cast<const char*>(data + pos),
+                               static_cast<size_t>(len));
+        }
+        if (!skip_wire_field(data, size, pos, wire)) break;
+    }
+    return "";
+}
+
+struct RawEntry {
+    std::string category;
+    uint32_t offset;
+    uint32_t length;
+};
+
+// Scan a serialized protobuf List message (GeoSiteList or GeoIPList)
+// to find each repeated field-1 entry and extract its country_code.
+std::vector<RawEntry> scan_top_level_entries(const uint8_t* data, size_t size) {
+    std::vector<RawEntry> entries;
+    size_t pos = 0;
+    while (pos < size) {
+        uint64_t tag;
+        if (!decode_varint(data, size, pos, tag)) break;
+        uint32_t field = static_cast<uint32_t>(tag >> 3);
+        int wire = static_cast<int>(tag & 0x07);
+        if (field == 1 && wire == 2) {
+            uint64_t len;
+            if (!decode_varint(data, size, pos, len)) break;
+            if (pos + len > size) break;
+            RawEntry e;
+            e.offset = static_cast<uint32_t>(pos);
+            e.length = static_cast<uint32_t>(len);
+            e.category = to_lower(extract_country_code(
+                data + pos, static_cast<size_t>(len)));
+            entries.push_back(std::move(e));
+            pos += static_cast<size_t>(len);
+        } else {
+            if (!skip_wire_field(data, size, pos, wire)) break;
+        }
+    }
+    return entries;
+}
+
 } // namespace
+
+// ---- load functions (lazy: read raw bytes + build index) ----
 
 std::unique_ptr<GeoSiteData> load_geosite(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
@@ -113,12 +193,15 @@ std::unique_ptr<GeoSiteData> load_geosite(const std::string& path) {
     std::string data(size, '\0');
     if (!f.read(&data[0], size)) return nullptr;
 
-    auto* list = new routercommon::GeoSiteList();
-    if (!list->ParseFromString(data)) {
-        delete list;
-        return nullptr;
-    }
-    return std::make_unique<GeoSiteData>(list);
+    auto raw = scan_top_level_entries(
+        reinterpret_cast<const uint8_t*>(data.data()), data.size());
+
+    std::vector<GeoSiteData::EntryLocation> entries;
+    entries.reserve(raw.size());
+    for (auto& r : raw)
+        entries.push_back({std::move(r.category), r.offset, r.length});
+
+    return std::make_unique<GeoSiteData>(std::move(data), std::move(entries));
 }
 
 std::unique_ptr<GeoIPData> load_geoip(const std::string& path) {
@@ -132,45 +215,68 @@ std::unique_ptr<GeoIPData> load_geoip(const std::string& path) {
     std::string data(size, '\0');
     if (!f.read(&data[0], size)) return nullptr;
 
-    auto* list = new routercommon::GeoIPList();
-    if (!list->ParseFromString(data)) {
-        delete list;
-        return nullptr;
-    }
-    return std::make_unique<GeoIPData>(list);
+    auto raw = scan_top_level_entries(
+        reinterpret_cast<const uint8_t*>(data.data()), data.size());
+
+    std::vector<GeoIPData::EntryLocation> entries;
+    entries.reserve(raw.size());
+    for (auto& r : raw)
+        entries.push_back({std::move(r.category), r.offset, r.length});
+
+    return std::make_unique<GeoIPData>(std::move(data), std::move(entries));
 }
+
+// ---- query functions (parse entries on demand, free after use) ----
 
 std::vector<std::string> search_domain_in_geosite(const GeoSiteData* geosite, const std::string& domain) {
     std::vector<std::string> result;
     if (!geosite) return result;
 
     const std::string domain_norm = normalize_domain(domain);
-    const auto* list = geosite->get();
+    const size_t total = geosite->entry_count();
+    if (total == 0) return result;
 
-    for (const auto& entry : list->entry()) {
-        std::string category = to_lower(entry.country_code());
-        std::set<std::string> matched_attrs;
-        bool matched_base = false;
+    unsigned hw = std::thread::hardware_concurrency();
+    const size_t num_threads = std::max<size_t>(1, std::min<size_t>(hw > 0 ? hw : 4, total));
+    const size_t chunk = (total + num_threads - 1) / num_threads;
 
-        for (const auto& d : entry.domain()) {
-            if (domain_matches(d.value(), static_cast<int>(d.type()), domain_norm)) {
-                matched_base = true;
-                for (const auto& a : d.attribute()) {
-                    matched_attrs.insert(to_lower(a.key()));
+    std::vector<std::future<std::vector<std::string>>> futures;
+    for (size_t t = 0; t < num_threads; ++t) {
+        size_t from = t * chunk;
+        size_t to = std::min(from + chunk, total);
+        if (from >= to) break;
+        futures.push_back(std::async(std::launch::async,
+            [geosite, &domain_norm, from, to]() {
+                std::vector<std::string> local;
+                for (size_t i = from; i < to; ++i) {
+                    auto entry = geosite->parse_entry(i);
+                    if (!entry) continue;
+                    std::string category = to_lower(entry->country_code());
+                    std::set<std::string> matched_attrs;
+                    bool matched_base = false;
+                    for (const auto& d : entry->domain()) {
+                        if (domain_matches(d.value(), static_cast<int>(d.type()), domain_norm)) {
+                            matched_base = true;
+                            for (const auto& a : d.attribute())
+                                matched_attrs.insert(to_lower(a.key()));
+                        }
+                    }
+                    if (matched_base) {
+                        local.push_back(category);
+                        for (const auto& attr : matched_attrs)
+                            local.push_back(category + "@" + attr);
+                    }
                 }
-            }
-        }
+                return local;
+            }));
+    }
 
-        if (matched_base) {
-            if (std::find(result.begin(), result.end(), category) == result.end()) {
-                result.push_back(category);
-            }
-            for (const auto& attr : matched_attrs) {
-                std::string sub = category + "@" + attr;
-                if (std::find(result.begin(), result.end(), sub) == result.end()) {
-                    result.push_back(sub);
-                }
-            }
+    // Merge + dedup
+    std::set<std::string> seen;
+    for (auto& f : futures) {
+        for (auto& s : f.get()) {
+            if (seen.insert(s).second)
+                result.push_back(std::move(s));
         }
     }
     return result;
@@ -182,57 +288,39 @@ std::vector<std::string> get_domains_from_geosite(const GeoSiteData* geosite, co
 
     auto [category, attr] = parse_tag(tag);
 
-    const auto* list = geosite->get();
+    // Try exact category match (O(1) via hash map)
+    int idx = geosite->find_category(category);
 
-    // If no "@" and tag contains "-", first check if the full name exists as a category.
-    // Only if it doesn't, try splitting by "-" to find category + attribute.
-    if (attr.empty() && category.find('-') != std::string::npos) {
-        bool exact_found = false;
-        for (const auto& entry : list->entry()) {
-            if (to_lower(entry.country_code()) == category) {
-                exact_found = true;
-                break;
-            }
-        }
-        if (!exact_found) {
-            // Try progressively shorter prefixes as category name
-            std::string best_cat;
-            std::string best_attr;
-            for (size_t i = category.size(); i > 0; --i) {
-                if (i < category.size() && category[i] == '-') {
-                    std::string try_cat = category.substr(0, i);
-                    std::string try_attr = category.substr(i + 1);
-                    for (const auto& entry : list->entry()) {
-                        if (to_lower(entry.country_code()) == try_cat) {
-                            best_cat = try_cat;
-                            best_attr = try_attr;
-                            break;
-                        }
-                    }
-                    if (!best_cat.empty()) break;
+    // If not found and tag contains "-", try splitting into category + attribute
+    if (idx < 0 && attr.empty() && category.find('-') != std::string::npos) {
+        for (size_t i = category.size(); i > 0; --i) {
+            if (i < category.size() && category[i] == '-') {
+                std::string try_cat = category.substr(0, i);
+                std::string try_attr = category.substr(i + 1);
+                int try_idx = geosite->find_category(try_cat);
+                if (try_idx >= 0) {
+                    category = try_cat;
+                    attr = try_attr;
+                    idx = try_idx;
+                    break;
                 }
-            }
-            if (!best_cat.empty()) {
-                category = best_cat;
-                attr = best_attr;
             }
         }
     }
 
-    for (const auto& entry : list->entry()) {
-        if (to_lower(entry.country_code()) != category) continue;
+    if (idx < 0) return domains;
 
-        for (const auto& d : entry.domain()) {
-            // If attribute filter is set, skip domains without that attribute
-            if (!attr.empty() && !domain_has_attribute(d, attr)) continue;
+    // Parse only the needed entry
+    auto entry = geosite->parse_entry(static_cast<size_t>(idx));
+    if (!entry) return domains;
 
-            int dt = static_cast<int>(d.type());
-            if (dt == 0) domains.push_back("keyword:" + d.value());
-            else if (dt == 1) domains.push_back("regexp:" + d.value());
-            else if (dt == 2) domains.push_back(d.value());
-            else if (dt == 3) domains.push_back("full:" + d.value());
-        }
-        break;
+    for (const auto& d : entry->domain()) {
+        if (!attr.empty() && !domain_has_attribute(d, attr)) continue;
+        int dt = static_cast<int>(d.type());
+        if (dt == 0) domains.push_back("keyword:" + d.value());
+        else if (dt == 1) domains.push_back("regexp:" + d.value());
+        else if (dt == 2) domains.push_back(d.value());
+        else if (dt == 3) domains.push_back("full:" + d.value());
     }
     return domains;
 }
@@ -312,15 +400,17 @@ std::vector<std::string> get_ips_from_geoip(const GeoIPData* geoip, const std::s
         tag_clean.erase(0, 1);
     }
 
-    const auto* list = geoip->get();
-    for (const auto& entry : list->entry()) {
-        if (to_lower(entry.country_code()) != tag_clean) continue;
+    // O(1) lookup instead of linear scan
+    int idx = geoip->find_category(tag_clean);
+    if (idx < 0) return result;
 
-        for (const auto& cidr : entry.cidr()) {
-            std::string s = cidr_to_string(cidr.ip(), cidr.prefix());
-            if (!s.empty()) result.push_back(s);
-        }
-        break;
+    // Parse only the needed entry
+    auto entry = geoip->parse_entry(static_cast<size_t>(idx));
+    if (!entry) return result;
+
+    for (const auto& cidr : entry->cidr()) {
+        std::string s = cidr_to_string(cidr.ip(), cidr.prefix());
+        if (!s.empty()) result.push_back(s);
     }
     return result;
 }
@@ -328,14 +418,17 @@ std::vector<std::string> get_ips_from_geoip(const GeoIPData* geoip, const std::s
 std::vector<std::string> list_geosite_categories(const GeoSiteData* geosite) {
     std::vector<std::string> result;
     if (!geosite) return result;
-    const auto* list = geosite->get();
-    for (const auto& entry : list->entry()) {
-        std::string cat = to_lower(entry.country_code());
+
+    for (size_t i = 0; i < geosite->entry_count(); ++i) {
+        const std::string& cat = geosite->category(i);
         result.push_back(cat);
 
-        // Collect unique attributes for this category
+        // Parse entry to collect attributes
+        auto entry = geosite->parse_entry(i);
+        if (!entry) continue;
+
         std::set<std::string> attrs;
-        for (const auto& d : entry.domain()) {
+        for (const auto& d : entry->domain()) {
             for (const auto& a : d.attribute()) {
                 attrs.insert(to_lower(a.key()));
             }
@@ -343,6 +436,7 @@ std::vector<std::string> list_geosite_categories(const GeoSiteData* geosite) {
         for (const auto& a : attrs) {
             result.push_back(cat + "@" + a);
         }
+        // entry freed here — one category at a time
     }
     return result;
 }

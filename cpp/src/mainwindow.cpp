@@ -38,7 +38,11 @@
 #include <QStyledItemDelegate>
 #include <QStyleOptionViewItem>
 #include <QStackedWidget>
-#include <QTextEdit>
+#include <QPlainTextEdit>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextBlock>
+#include <QPlainTextDocumentLayout>
 #include <QTimer>
 #include <QPropertyAnimation>
 #include <QScrollBar>
@@ -50,48 +54,83 @@
 #include <QSettings>
 #endif
 #include <algorithm>
+#include <chrono>
 #include <future>
 #include <set>
 #include <thread>
 
 namespace geochecker {
 
-class SmoothScrollTextEdit : public QTextEdit {
+class SmoothScrollTextEdit : public QPlainTextEdit {
     Q_OBJECT
 public:
-    using QTextEdit::QTextEdit;
+    using QPlainTextEdit::QPlainTextEdit;
 protected:
     void wheelEvent(QWheelEvent* e) override {
         const int delta = e->angleDelta().y();
-        if (delta == 0) { QTextEdit::wheelEvent(e); return; }
-        if (!anim_ || anim_->state() != QAbstractAnimation::Running)
-            target_value_ = verticalScrollBar()->value();
-        target_value_ -= delta;
+        if (delta == 0) { QPlainTextEdit::wheelEvent(e); return; }
         auto* bar = verticalScrollBar();
-        target_value_ = qBound(bar->minimum(), target_value_, bar->maximum());
-        if (!anim_) {
-            anim_ = new QPropertyAnimation(bar, "value", this);
-            anim_->setEasingCurve(QEasingCurve::OutCubic);
-        }
-        anim_->stop();
-        anim_->setDuration(300);
-        anim_->setStartValue(bar->value());
-        anim_->setEndValue(target_value_);
-        anim_->start();
+        ensureTimer();
+        if (!timer_->isActive())
+            target_ = bar->value();
+        int lineH = fontMetrics().height();
+        double scrollAmount = (delta > 0 ? -1.0 : 1.0) * 0.3 * lineH;
+        target_ += scrollAmount;
+        target_ = qBound(static_cast<double>(bar->minimum()), target_, static_cast<double>(bar->maximum()));
+        if (!timer_->isActive())
+            timer_->start();
         e->accept();
     }
+    void mousePressEvent(QMouseEvent* e) override {
+        if (timer_ && timer_->isActive()) timer_->stop();
+        QPlainTextEdit::mousePressEvent(e);
+    }
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        QPlainTextEdit::mouseReleaseEvent(e);
+        target_ = verticalScrollBar()->value();
+    }
     void showEvent(QShowEvent* e) override {
-        QTextEdit::showEvent(e);
-        target_value_ = verticalScrollBar()->value();
+        QPlainTextEdit::showEvent(e);
+        target_ = verticalScrollBar()->value();
     }
 private:
-    QPropertyAnimation* anim_ = nullptr;
-    int target_value_ = 0;
+    void ensureTimer() {
+        if (timer_) return;
+        timer_ = new QTimer(this);
+        timer_->setInterval(7); // ~144fps
+        connect(timer_, &QTimer::timeout, this, [this]() {
+            auto* b = verticalScrollBar();
+            double diff = target_ - b->value();
+            if (qAbs(diff) < 1.0) {
+                b->setValue(static_cast<int>(target_));
+                timer_->stop();
+                return;
+            }
+            // Adaptive lerp: responsive start, soft landing
+            double absDiff = qAbs(diff);
+            double t = qBound(0.0, absDiff / 40.0, 1.0);
+            double factor = 0.06 + 0.09 * t;
+            int step = static_cast<int>(diff * factor);
+            if (step == 0) step = (diff > 0) ? 1 : -1;
+            our_scroll_ = true;
+            b->setValue(b->value() + step);
+            our_scroll_ = false;
+        });
+        connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int val) {
+            if (!our_scroll_ && (!timer_ || !timer_->isActive()))
+                target_ = val;
+        });
+    }
+    QTimer* timer_ = nullptr;
+    double target_ = 0;
+    bool our_scroll_ = false;
 };
 
-struct DnsResult {
-    int checked;
-    std::vector<std::string> ips;
+struct OpResult {
+    QStringList items;
+    QString output;
+    int count = 0;
+    int extra = 0;
 };
 
 static QMap<QString, QMap<QString, QString>> translations = []() {
@@ -613,7 +652,7 @@ static QString lightStylesheet() {
             background-color: #f8fafc; border: 1px solid #d1d5db; border-radius: 8px;
         }
         QFrame#textEditWrap QWidget { background-color: #f8fafc; }
-        QFrame#textEditWrap QTextEdit {
+        QFrame#textEditWrap QPlainTextEdit {
             background: transparent; border: none; border-radius: 0px;
             padding: 6px 12px; color: #1e293b; font-family: "Cascadia Code", "Fira Code", "Consolas", "Monaco", monospace; font-size: 13px;
             selection-background-color: #3b82f6; selection-color: #ffffff;
@@ -728,7 +767,7 @@ static QString lightStylesheet() {
             background: #d5dae2; height: 10px; margin: 0px; border-radius: 5px;
         }
 
-        QTextEdit { padding-right: 4px; }
+        QPlainTextEdit { padding-right: 4px; }
     )").arg(lang_ui::COMBO_MIN_WIDTH);
 }
 
@@ -765,7 +804,7 @@ static QString darkStylesheet() {
             background-color: #2c3037; border: 1px solid #3f4652; border-radius: 8px;
         }
         QFrame#textEditWrap QWidget { background-color: #2c3037; }
-        QFrame#textEditWrap QTextEdit {
+        QFrame#textEditWrap QPlainTextEdit {
             background: transparent; border: none; border-radius: 0px;
             padding: 6px 12px; color: #e2e8f0; font-family: Consolas, monospace; font-size: 13px;
             selection-background-color: #3b82f6; selection-color: #ffffff;
@@ -883,12 +922,20 @@ static QString darkStylesheet() {
             background: #3a3f48; height: 10px; margin: 0px; border-radius: 5px;
         }
 
-        QTextEdit { padding-right: 4px; }
+        QPlainTextEdit { padding-right: 4px; }
     )").arg(lang_ui::COMBO_MIN_WIDTH);
 }
 
-// Logging disabled (no-op). For debugging: cmake -DGEOCHECKER_DEBUG=ON ..
-static inline void geoLog(const char* /*topic*/, const QString& /*msg*/) {}
+static const QString& cachedLightStylesheet() {
+    static const QString s = lightStylesheet();
+    return s;
+}
+static const QString& cachedDarkStylesheet() {
+    static const QString s = darkStylesheet();
+    return s;
+}
+
+static inline void geoLog(const char*, const QString&) {}
 
 static QString detectSystemLanguage() {
     QLocale locale = QLocale::system();
@@ -921,15 +968,19 @@ MainWindow::MainWindow(QWidget* parent)
              geo.y() + (geo.height() - height()) / 2);
     }
     buildUI();
-    theme_combo_->blockSignals(true);
-    theme_combo_->setCurrentIndex(theme_combo_->findData("system"));
-    theme_combo_->blockSignals(false);
-    geoLog("MainWindow", "before updateThemeFromSystem");
-    updateThemeFromSystem();
-    // Process events before recalc so first applyLanguage uses lw from applied styles (font); removes initial 11px gap.
-    QApplication::processEvents(QEventLoop::ProcessEventsFlag::AllEvents, 50);
+    qApp->installEventFilter(this);
+
+    // Apply theme once — no deferred callbacks during init
+    dark_theme_ = detectSystemDarkTheme();
+    qApp->setStyleSheet(dark_theme_ ? cachedDarkStylesheet() : cachedLightStylesheet());
+    setupSystemThemeListener();
+
+    // Single processEvents for correct font metrics after stylesheet
+    QApplication::processEvents(QEventLoop::AllEvents, 50);
+
     loadDefaultPaths();
-    applyLanguage();
+    applyLanguageRowSizes();
+    language_row_fix_applied_ = true;
     geoLog("MainWindow", "ctor end");
 }
 
@@ -958,7 +1009,17 @@ void MainWindow::refreshSettingsRowStyles() {
 void MainWindow::applyTheme(bool dark) {
     geoLog("applyTheme", "dark=" + QString::number(dark));
     dark_theme_ = dark;
-    qApp->setStyleSheet(dark ? darkStylesheet() : lightStylesheet());
+    // Hide result widgets during stylesheet change to avoid expensive relayout of large documents
+    if (result_categories_) result_categories_->setUpdatesEnabled(false);
+    if (result_domains_) result_domains_->setUpdatesEnabled(false);
+    if (result_ips_) result_ips_->setUpdatesEnabled(false);
+
+    qApp->setStyleSheet(dark ? cachedDarkStylesheet() : cachedLightStylesheet());
+
+    if (result_categories_) result_categories_->setUpdatesEnabled(true);
+    if (result_domains_) result_domains_->setUpdatesEnabled(true);
+    if (result_ips_) result_ips_->setUpdatesEnabled(true);
+
     QTimer::singleShot(0, this, [this]() {
         geoLog("applyTheme", "singleShot: refreshSettingsRowStyles");
         refreshSettingsRowStyles();
@@ -1087,6 +1148,9 @@ void MainWindow::buildUI() {
     language_combo_->setObjectName("langCombo");
     language_combo_->setItemDelegate(new ComboDelegate(language_combo_));
     language_combo_->addItems({"Русский", "English"});
+    language_combo_->blockSignals(true);
+    language_combo_->setCurrentIndex(lang_ == "ru" ? 0 : 1);
+    language_combo_->blockSignals(false);
     language_combo_->setFixedSize(lang_btn_width, lang_btn_height);
     language_combo_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     connect(language_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::onLanguageChange);
@@ -1243,6 +1307,7 @@ void MainWindow::buildUI() {
     find_cat_btn_->setObjectName("primary");
     find_cat_btn_->setFlat(true);
     find_cat_btn_->setMinimumWidth(200);
+    find_cat_btn_->setFocusPolicy(Qt::NoFocus);
     connect(find_cat_btn_, &QPushButton::clicked, this, &MainWindow::onSearchDomain);
     ql->addWidget(find_cat_btn_, 0, 2);
 
@@ -1256,6 +1321,7 @@ void MainWindow::buildUI() {
     domains_btn_->setObjectName("secondary");
     domains_btn_->setFlat(true);
     domains_btn_->setFixedWidth(95);
+    domains_btn_->setFocusPolicy(Qt::NoFocus);
     connect(domains_btn_, &QPushButton::clicked, this, &MainWindow::onGetDomains);
     geoBtns->addWidget(domains_btn_);
     dns_btn_ = new QPushButton("IP (DNS)");
@@ -1276,6 +1342,7 @@ void MainWindow::buildUI() {
     geoip_btn_->setObjectName("primary");
     geoip_btn_->setFlat(true);
     geoip_btn_->setMinimumWidth(200);
+    geoip_btn_->setFocusPolicy(Qt::NoFocus);
     connect(geoip_btn_, &QPushButton::clicked, this, &MainWindow::onGetIPsFromGeoIP);
     ql->addWidget(geoip_btn_, 2, 2);
     ql->setColumnStretch(1, 1);
@@ -1310,9 +1377,10 @@ void MainWindow::buildUI() {
 
     results_stack_ = new QStackedWidget;
 
-    auto wrapTextEdit = [&](QTextEdit*& te) -> QFrame* {
+    auto wrapTextEdit = [&](QPlainTextEdit*& te) -> QFrame* {
         te = new SmoothScrollTextEdit;
         te->setReadOnly(true);
+        te->setLineWrapMode(QPlainTextEdit::NoWrap);
         te->viewport()->installEventFilter(this);
         auto* frame = new QFrame;
         frame->setObjectName("textEditWrap");
@@ -1458,12 +1526,20 @@ void MainWindow::showEvent(QShowEvent* event) {
 }
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* focused = focusWidget();
+        if (focused && qobject_cast<QLineEdit*>(focused)) {
+            auto* target = qobject_cast<QWidget*>(obj);
+            if (target && !qobject_cast<QLineEdit*>(target))
+                focused->clearFocus();
+        }
+    }
     if (event->type() == QEvent::ContextMenu) {
         auto* cme = static_cast<QContextMenuEvent*>(event);
         QMenu* menu = nullptr;
-        if (auto* te = qobject_cast<QTextEdit*>(obj))
+        if (auto* te = qobject_cast<QPlainTextEdit*>(obj))
             menu = te->createStandardContextMenu();
-        else if (auto* te = qobject_cast<QTextEdit*>(obj->parent()))
+        else if (auto* te = qobject_cast<QPlainTextEdit*>(obj->parent()))
             menu = te->createStandardContextMenu();
         else if (auto* le = qobject_cast<QLineEdit*>(obj))
             menu = le->createStandardContextMenu();
@@ -1529,37 +1605,69 @@ void MainWindow::setResultText(const QString& text, int tabIndex) {
 void MainWindow::rebuildResultText(int tab) {
     if (tab < 0 || tab > 2 || result_kind_[tab] == RK_None) return;
     const auto& items = result_items_[tab];
-    QString output;
+    ResultKind kind = result_kind_[tab];
+    int extra = result_extra_[tab];
 
-    switch (result_kind_[tab]) {
+    QString tr_not_found = trKey("not_found");
+    QString tr_domains_count = trKey("domains_count");
+    QString tr_empty = trKey("empty_list");
+    QString tr_dns_header = trKey("dns_result_header");
+    QString tr_ips_not_found = trKey("ips_not_found");
+    QString tr_ip_cidr = trKey("ip_cidr_count");
+
+    // Build new header for this result kind
+    auto buildHeader = [&]() -> QString {
+        switch (kind) {
+        case RK_Domains:  return tr_domains_count.arg(items.size());
+        case RK_DnsIPs:   return tr_dns_header.arg(extra).arg(items.size());
+        case RK_GeoIPs:   return tr_ip_cidr.arg(items.size());
+        default: return {};
+        }
+    };
+
+    QPlainTextEdit* te = (tab == 0) ? result_categories_ : (tab == 1) ? result_domains_ : result_ips_;
+
+    // For large results with a header (Domains/DnsIPs/GeoIPs), only replace the header line(s)
+    // The body (domain/IP list) doesn't depend on language — avoid toPlainText() on huge docs
+    if (items.size() > 5000 && (kind == RK_Domains || kind == RK_DnsIPs || kind == RK_GeoIPs)) {
+        QString newHeader = buildHeader();
+        QTextDocument* doc = te->document();
+        QTextBlock block = doc->begin();
+        // First block is the header line
+        if (!block.isValid()) return;
+        QString oldHeader = block.text();
+        if (oldHeader == newHeader) return; // already correct
+        QTextCursor cursor(block);
+        cursor.select(QTextCursor::BlockUnderCursor);
+        cursor.insertText(newHeader);
+        return;
+    }
+
+    // Small results or categories: rebuild fully (fast enough)
+    QString output;
+    switch (kind) {
     case RK_Categories:
-        for (const auto& c : items) output += c + "\n";
-        if (output.isEmpty()) output = trKey("not_found");
+        output = items.isEmpty() ? tr_not_found : (items.join(QChar('\n')) + QChar('\n'));
         break;
     case RK_Domains: {
-        QString body;
-        for (const auto& d : items) body += d + "\n";
-        output = trKey("domains_count").arg(items.size()) + "\n\n" + (body.isEmpty() ? trKey("empty_list") : body);
+        QString body = items.isEmpty() ? tr_empty : (items.join(QChar('\n')) + QChar('\n'));
+        output = tr_domains_count.arg(items.size()) + QStringLiteral("\n\n") + body;
         break;
     }
     case RK_DnsIPs: {
-        output = trKey("dns_result_header").arg(result_extra_[tab]).arg(items.size());
-        for (const auto& ip : items) output += ip + "\n";
-        if (items.isEmpty()) output += trKey("ips_not_found");
+        output = tr_dns_header.arg(extra).arg(items.size());
+        if (items.isEmpty()) output += tr_ips_not_found;
+        else output += items.join(QChar('\n')) + QChar('\n');
         break;
     }
     case RK_GeoIPs: {
-        QString body;
-        for (const auto& ip : items) body += ip + "\n";
-        output = trKey("ip_cidr_count").arg(items.size()) + "\n\n" + (body.isEmpty() ? trKey("empty_list") : body);
+        QString body = items.isEmpty() ? tr_empty : (items.join(QChar('\n')) + QChar('\n'));
+        output = tr_ip_cidr.arg(items.size()) + QStringLiteral("\n\n") + body;
         break;
     }
     default: return;
     }
-
-    if (tab == 0) result_categories_->setPlainText(output);
-    else if (tab == 1) result_domains_->setPlainText(output);
-    else result_ips_->setPlainText(output);
+    if (te->toPlainText() != output) te->setPlainText(output);
     if (active_tab_ == tab) current_result_text_ = output;
 }
 
@@ -1574,10 +1682,10 @@ bool MainWindow::ensureGeoSiteLoaded() {
     if (path.isEmpty()) { showMessage(this, trKey("warning"), trKey("set_geosite_path"), QMessageBox::Warning); return false; }
     if (!QFileInfo::exists(path)) { showMessage(this, trKey("error"), trKey("file_not_found").arg(path), QMessageBox::Critical); return false; }
     if (loaded_geosite_path_ == path && geosite_data_) return true;
-    setStatusTr("loading_geosite", {}, true);
-    QCoreApplication::processEvents();
+    auto t0 = std::chrono::steady_clock::now();
     geosite_data_ = load_geosite(path.toStdString());
-    setStatusTr("ready");
+    auto t1 = std::chrono::steady_clock::now();
+    geoLog("Load", "geosite " + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()) + "ms entries=" + (geosite_data_ ? QString::number(geosite_data_->entry_count()) : "FAIL"));
     if (!geosite_data_) { showMessage(this, trKey("error"), trKey("load_geosite_failed").arg(path), QMessageBox::Critical); return false; }
     loaded_geosite_path_ = path;
     return true;
@@ -1588,22 +1696,31 @@ bool MainWindow::ensureGeoIPLoaded() {
     if (path.isEmpty()) { showMessage(this, trKey("warning"), trKey("set_geoip_path"), QMessageBox::Warning); return false; }
     if (!QFileInfo::exists(path)) { showMessage(this, trKey("error"), trKey("file_not_found").arg(path), QMessageBox::Critical); return false; }
     if (loaded_geoip_path_ == path && geoip_data_) return true;
-    setStatusTr("loading_geoip", {}, true);
-    QCoreApplication::processEvents();
+    auto t0 = std::chrono::steady_clock::now();
     geoip_data_ = load_geoip(path.toStdString());
-    setStatusTr("ready");
+    auto t1 = std::chrono::steady_clock::now();
+    geoLog("Load", "geoip " + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()) + "ms entries=" + (geoip_data_ ? QString::number(geoip_data_->entry_count()) : "FAIL"));
     if (!geoip_data_) { showMessage(this, trKey("error"), trKey("load_geoip_failed").arg(path), QMessageBox::Critical); return false; }
     loaded_geoip_path_ = path;
     return true;
 }
 
+void MainWindow::setOperationButtonsEnabled(bool enabled) {
+    find_cat_btn_->setEnabled(enabled);
+    domains_btn_->setEnabled(enabled);
+    dns_btn_->setEnabled(enabled);
+    geoip_btn_->setEnabled(enabled);
+}
+
 void MainWindow::runBackground(const std::function<std::any()>& work,
                               const std::function<void(std::any, const QString&)>& onDone) {
+    bg_busy_ = true;
     QFuture<std::pair<std::any, QString>> future = QtConcurrent::run([work, onDone]() -> std::pair<std::any, QString> {
         try { return {work(), QString()}; } catch (const std::exception& e) { return {std::any(), QString::fromStdString(e.what())}; } catch (...) { return {std::any(), QString("Unknown error")}; }
     });
     auto* watcher = new QFutureWatcher<std::pair<std::any, QString>>(this);
     connect(watcher, &QFutureWatcher<std::pair<std::any, QString>>::finished, this, [watcher, onDone, this]() {
+        bg_busy_ = false;
         auto p = watcher->future().result();
         onDone(p.first, p.second);
         watcher->deleteLater();
@@ -1622,50 +1739,101 @@ void MainWindow::onBrowseGeoIP() {
 }
 
 void MainWindow::onSearchDomain() {
+    if (bg_busy_) return;
     QString domain = domain_entry_->text().trimmed();
     if (domain.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_domain"), QMessageBox::Information); return; }
     if (!ensureGeoSiteLoaded()) return;
-    setStatusTr("searching_categories");
-    auto cats = search_domain_in_geosite(geosite_data_.get(), domain.toStdString());
-    result_kind_[0] = RK_Categories;
-    result_items_[0].clear();
-    for (const auto& c : cats) result_items_[0] << QString::fromStdString("geosite:" + c);
-    rebuildResultText(0);
-    results_stack_->setCurrentIndex(0);
-    active_tab_ = 0;
-    current_result_text_ = result_categories_->toPlainText();
-    refreshTabStyles();
-    updateStats(static_cast<int>(cats.size()), -1, -1);
-    setStatusTr("categories_found", QString::number(cats.size()));
+    geoLog("SearchDomain", "start domain=" + domain);
+    setStatusTr("searching_categories", {}, true);
+    QString tr_not_found = trKey("not_found");
+    auto t0 = std::chrono::steady_clock::now();
+    runBackground(
+        [geosite = geosite_data_.get(), domain_str = domain.toStdString(), tr_not_found, t0]() -> std::any {
+            auto cats = search_domain_in_geosite(geosite, domain_str);
+            auto t1 = std::chrono::steady_clock::now();
+            OpResult r;
+            r.count = static_cast<int>(cats.size());
+            r.items.reserve(r.count);
+            for (const auto& c : cats) r.items << QString::fromStdString("geosite:" + c);
+            if (r.items.isEmpty()) { r.output = tr_not_found; }
+            else { r.output = r.items.join(QChar('\n')) + QChar('\n'); }
+            auto t2 = std::chrono::steady_clock::now();
+            auto search_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+            auto build_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+            geoLog("SearchDomain", "BG search=" + QString::number(search_ms) + "ms build=" + QString::number(build_ms) + "ms found=" + QString::number(r.count));
+            return r;
+        },
+        [this, t0](std::any result, const QString& err) {
+            if (!err.isEmpty()) { setStatusTr("error"); return; }
+            auto tCb = std::chrono::steady_clock::now();
+            auto r = std::any_cast<OpResult>(std::move(result));
+            result_kind_[0] = RK_Categories;
+            result_items_[0] = std::move(r.items);
+            QPlainTextEdit* te = result_categories_;
+            if (te->toPlainText() != r.output) te->setPlainText(r.output);
+            results_stack_->setCurrentIndex(0);
+            active_tab_ = 0;
+            current_result_text_ = r.output;
+            refreshTabStyles();
+            updateStats(r.count, -1, -1);
+            auto tEnd = std::chrono::steady_clock::now();
+            geoLog("SearchDomain", "UI callback=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tCb).count()) + "ms total=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - t0).count()) + "ms");
+            setStatusTr("categories_found", QString::number(r.count));
+        });
 }
 
 void MainWindow::onGetDomains() {
+    if (bg_busy_) return;
     QString tag = geosite_tag_entry_->text().trimmed();
     if (tag.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_geosite_tag"), QMessageBox::Information); return; }
     if (!ensureGeoSiteLoaded()) return;
-    setStatusTr("getting_domains");
-    auto domains = get_domains_from_geosite(geosite_data_.get(), tag.toStdString());
-    result_kind_[1] = RK_Domains;
-    result_items_[1].clear();
-    for (const auto& d : domains) result_items_[1] << QString::fromStdString(d);
-    rebuildResultText(1);
-    results_stack_->setCurrentIndex(1);
-    active_tab_ = 1;
-    current_result_text_ = result_domains_->toPlainText();
-    refreshTabStyles();
-    updateStats(-1, static_cast<int>(domains.size()), -1);
-    setStatusTr("domains_received", QString::number(domains.size()));
+    geoLog("GetDomains", "start tag=" + tag);
+    setStatusTr("getting_domains", {}, true);
+    QString tr_count = trKey("domains_count"), tr_empty = trKey("empty_list");
+    auto t0 = std::chrono::steady_clock::now();
+    runBackground(
+        [geosite = geosite_data_.get(), tag_str = tag.toStdString(), tr_count, tr_empty, t0]() -> std::any {
+            auto domains = get_domains_from_geosite(geosite, tag_str);
+            auto t1 = std::chrono::steady_clock::now();
+            OpResult r;
+            r.count = static_cast<int>(domains.size());
+            r.items.reserve(r.count);
+            for (const auto& d : domains) r.items << QString::fromStdString(d);
+            QString body = r.items.isEmpty() ? tr_empty : (r.items.join(QChar('\n')) + QChar('\n'));
+            r.output = tr_count.arg(r.count) + QStringLiteral("\n\n") + body;
+            auto t2 = std::chrono::steady_clock::now();
+            geoLog("GetDomains", "BG parse=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()) + "ms build=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count()) + "ms count=" + QString::number(r.count));
+            return r;
+        },
+        [this, t0](std::any result, const QString& err) {
+            if (!err.isEmpty()) { setStatusTr("error"); return; }
+            auto tCb = std::chrono::steady_clock::now();
+            auto r = std::any_cast<OpResult>(std::move(result));
+            result_kind_[1] = RK_Domains;
+            result_items_[1] = std::move(r.items);
+            QPlainTextEdit* te = result_domains_;
+            te->setPlainText(r.output);
+            results_stack_->setCurrentIndex(1);
+            active_tab_ = 1;
+            current_result_text_ = r.output;
+            refreshTabStyles();
+            updateStats(-1, r.count, -1);
+            auto tEnd = std::chrono::steady_clock::now();
+            geoLog("GetDomains", "UI callback=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tCb).count()) + "ms total=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - t0).count()) + "ms");
+            setStatusTr("domains_received", QString::number(r.count));
+        });
 }
 
 void MainWindow::onGetIPsFromDNS() {
+    if (bg_busy_) return;
     QString tag = geosite_tag_entry_->text().trimmed();
     if (tag.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_geosite_tag"), QMessageBox::Information); return; }
     if (!ensureGeoSiteLoaded()) return;
-    dns_btn_->setEnabled(false);
     if (result_ips_->toPlainText().isEmpty()) setResultText(trKey("dns_starting"), 2);
     setStatusTr("dns_running", {}, true);
+    QString tr_header = trKey("dns_result_header"), tr_not_found = trKey("ips_not_found");
     runBackground(
-        [this, tag]() -> std::any {
+        [this, tag, tr_header, tr_not_found]() -> std::any {
             auto domains = get_domains_from_geosite(geosite_data_.get(), tag.toStdString());
             std::vector<std::string> resolvable;
             for (const auto& d : domains) {
@@ -1681,45 +1849,76 @@ void MainWindow::onGetIPsFromDNS() {
             for (auto& f : futures) for (const auto& ip : f.get()) ips.insert(ip);
             std::vector<std::string> sorted(ips.begin(), ips.end());
             std::sort(sorted.begin(), sorted.end());
-            return DnsResult{static_cast<int>(resolvable.size()), sorted};
+            OpResult r;
+            r.count = static_cast<int>(sorted.size());
+            r.extra = static_cast<int>(resolvable.size());
+            r.items.reserve(r.count);
+            for (const auto& ip : sorted) r.items << QString::fromStdString(ip);
+            r.output = tr_header.arg(r.extra).arg(r.count);
+            if (r.items.isEmpty()) { r.output += tr_not_found; }
+            else { r.output += r.items.join(QChar('\n')) + QChar('\n'); }
+            return r;
         },
         [this](std::any result, const QString& err) {
-            dns_btn_->setEnabled(true);
             setStatus(QString(), false);
             if (!err.isEmpty()) { setResultText(trKey("error") + ": " + err, 2); setStatusTr("dns_error"); return; }
             try {
-                auto r = std::any_cast<DnsResult>(result);
+                auto r = std::any_cast<OpResult>(std::move(result));
                 result_kind_[2] = RK_DnsIPs;
-                result_extra_[2] = r.checked;
-                result_items_[2].clear();
-                for (const auto& ip : r.ips) result_items_[2] << QString::fromStdString(ip);
-                rebuildResultText(2);
+                result_extra_[2] = r.extra;
+                result_items_[2] = std::move(r.items);
+                QPlainTextEdit* te = result_ips_;
+                if (te->toPlainText() != r.output) te->setPlainText(r.output);
                 results_stack_->setCurrentIndex(2);
                 active_tab_ = 2;
-                current_result_text_ = result_ips_->toPlainText();
+                current_result_text_ = r.output;
                 refreshTabStyles();
-                updateStats(-1, -1, static_cast<int>(r.ips.size()));
-                setStatusTr("dns_done", QString::number(r.ips.size()));
+                updateStats(-1, -1, r.count);
+                setStatusTr("dns_done", QString::number(r.count));
             } catch (...) { setStatusTr("dns_error"); }
         });
 }
 
 void MainWindow::onGetIPsFromGeoIP() {
+    if (bg_busy_) return;
     QString tag = geoip_tag_entry_->text().trimmed();
     if (tag.isEmpty()) { showMessage(this, trKey("info"), trKey("enter_geoip_tag"), QMessageBox::Information); return; }
     if (!ensureGeoIPLoaded()) return;
-    setStatusTr("getting_geoip_ranges");
-    auto ips = get_ips_from_geoip(geoip_data_.get(), tag.toStdString());
-    result_kind_[2] = RK_GeoIPs;
-    result_items_[2].clear();
-    for (const auto& ip : ips) result_items_[2] << QString::fromStdString(ip);
-    rebuildResultText(2);
-    results_stack_->setCurrentIndex(2);
-    active_tab_ = 2;
-    current_result_text_ = result_ips_->toPlainText();
-    refreshTabStyles();
-    updateStats(-1, -1, static_cast<int>(ips.size()));
-    setStatusTr("ranges_received", QString::number(ips.size()));
+    geoLog("GetIPsGeoIP", "start tag=" + tag);
+    setStatusTr("getting_geoip_ranges", {}, true);
+    QString tr_count = trKey("ip_cidr_count"), tr_empty = trKey("empty_list");
+    auto t0 = std::chrono::steady_clock::now();
+    runBackground(
+        [geoip = geoip_data_.get(), tag_str = tag.toStdString(), tr_count, tr_empty, t0]() -> std::any {
+            auto ips = get_ips_from_geoip(geoip, tag_str);
+            auto t1 = std::chrono::steady_clock::now();
+            OpResult r;
+            r.count = static_cast<int>(ips.size());
+            r.items.reserve(r.count);
+            for (const auto& ip : ips) r.items << QString::fromStdString(ip);
+            QString body = r.items.isEmpty() ? tr_empty : (r.items.join(QChar('\n')) + QChar('\n'));
+            r.output = tr_count.arg(r.count) + QStringLiteral("\n\n") + body;
+            auto t2 = std::chrono::steady_clock::now();
+            geoLog("GetIPsGeoIP", "BG parse=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()) + "ms build=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count()) + "ms count=" + QString::number(r.count));
+            return r;
+        },
+        [this, t0](std::any result, const QString& err) {
+            if (!err.isEmpty()) { setStatusTr("error"); return; }
+            auto tCb = std::chrono::steady_clock::now();
+            auto r = std::any_cast<OpResult>(std::move(result));
+            result_kind_[2] = RK_GeoIPs;
+            result_items_[2] = std::move(r.items);
+            QPlainTextEdit* te = result_ips_;
+            if (te->toPlainText() != r.output) te->setPlainText(r.output);
+            results_stack_->setCurrentIndex(2);
+            active_tab_ = 2;
+            current_result_text_ = r.output;
+            refreshTabStyles();
+            updateStats(-1, -1, r.count);
+            auto tEnd = std::chrono::steady_clock::now();
+            geoLog("GetIPsGeoIP", "UI callback=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - tCb).count()) + "ms total=" + QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(tEnd - t0).count()) + "ms");
+            setStatusTr("ranges_received", QString::number(r.count));
+        });
 }
 
 void MainWindow::onCopyResult() {

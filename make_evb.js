@@ -8,8 +8,8 @@ const outputExe = path.resolve('GeoChecker_packed.exe');
 
 generateEvb(evbFile, inputExe, outputExe, deployDir, {
     filter: function(fullPath, name, isDir) {
-        // Exclude the exe itself from the packed files (it's already the input)
-        if (!isDir && name.toLowerCase() === 'geochecker.exe') return false;
+        // Исключаем основной exe из списка файлов (он задан как inputExe)
+        if (!isDir && (name.toLowerCase() === 'geochecker.exe' || name === 'GeoChecker.exe')) return false;
         return true;
     },
     evbOptions: {

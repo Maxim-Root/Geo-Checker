@@ -1,44 +1,73 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <vector>
+#include <unordered_map>
 
 namespace routercommon {
-class GeoSiteList;
-class GeoIPList;
+class GeoSite;
+class GeoIP;
 }
 
 namespace geochecker {
 
-// Wrapper around GeoSiteList for RAII
+// Lazy-parsed geosite.dat: keeps raw bytes in memory (~10-15 MB)
+// and parses individual entries on demand instead of the full protobuf tree (~200-300 MB)
 class GeoSiteData {
 public:
-    explicit GeoSiteData(routercommon::GeoSiteList* data) : data_(data) {}
+    struct EntryLocation {
+        std::string category;
+        uint32_t offset;
+        uint32_t length;
+    };
+
+    GeoSiteData(std::string raw_data, std::vector<EntryLocation> entries);
     ~GeoSiteData();
 
     GeoSiteData(const GeoSiteData&) = delete;
     GeoSiteData& operator=(const GeoSiteData&) = delete;
 
-    routercommon::GeoSiteList* get() { return data_; }
-    const routercommon::GeoSiteList* get() const { return data_; }
+    size_t entry_count() const { return entries_.size(); }
+    const std::string& category(size_t idx) const { return entries_[idx].category; }
+
+    // Parse a single entry on demand — caller owns the result
+    std::unique_ptr<routercommon::GeoSite> parse_entry(size_t idx) const;
+
+    // O(1) category lookup, returns -1 if not found
+    int find_category(const std::string& cat) const;
 
 private:
-    routercommon::GeoSiteList* data_;
+    std::string raw_data_;
+    std::vector<EntryLocation> entries_;
+    std::unordered_map<std::string, size_t> cat_lookup_;
 };
 
-// Wrapper around GeoIPList for RAII
+// Lazy-parsed geoip.dat: same approach
 class GeoIPData {
 public:
-    explicit GeoIPData(routercommon::GeoIPList* data) : data_(data) {}
+    struct EntryLocation {
+        std::string category;
+        uint32_t offset;
+        uint32_t length;
+    };
+
+    GeoIPData(std::string raw_data, std::vector<EntryLocation> entries);
     ~GeoIPData();
 
     GeoIPData(const GeoIPData&) = delete;
     GeoIPData& operator=(const GeoIPData&) = delete;
 
-    routercommon::GeoIPList* get() { return data_; }
-    const routercommon::GeoIPList* get() const { return data_; }
+    size_t entry_count() const { return entries_.size(); }
+    const std::string& category(size_t idx) const { return entries_[idx].category; }
+
+    std::unique_ptr<routercommon::GeoIP> parse_entry(size_t idx) const;
+    int find_category(const std::string& cat) const;
 
 private:
-    routercommon::GeoIPList* data_;
+    std::string raw_data_;
+    std::vector<EntryLocation> entries_;
+    std::unordered_map<std::string, size_t> cat_lookup_;
 };
 
 } // namespace geochecker
