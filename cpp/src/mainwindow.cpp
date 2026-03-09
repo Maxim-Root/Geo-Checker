@@ -581,6 +581,7 @@ static QString lightStylesheet() {
         QFrame#textEditWrap QTextEdit {
             background: transparent; border: none; border-radius: 0px;
             padding: 12px; color: #1e293b; font-family: "Cascadia Code", "Fira Code", "Consolas", "Monaco", monospace; font-size: 13px;
+            selection-background-color: #3b82f6; selection-color: #ffffff;
         }
         QPushButton#primary, QPushButton#secondary {
             background-color: #3b82f6; color: white; border: none; border-radius: 12px;
@@ -732,6 +733,7 @@ static QString darkStylesheet() {
         QFrame#textEditWrap QTextEdit {
             background: transparent; border: none; border-radius: 0px;
             padding: 12px; color: #e2e8f0; font-family: Consolas, monospace; font-size: 13px;
+            selection-background-color: #3b82f6; selection-color: #ffffff;
         }
         QPushButton#primary, QPushButton#secondary {
             background-color: #3b82f6; color: white; border: none; border-radius: 12px;
@@ -1225,6 +1227,7 @@ void MainWindow::buildUI() {
     dns_btn_->setObjectName("secondary");
     dns_btn_->setFlat(true);
     dns_btn_->setFixedWidth(95);
+    dns_btn_->setFocusPolicy(Qt::NoFocus);
     connect(dns_btn_, &QPushButton::clicked, this, &MainWindow::onGetIPsFromDNS);
     geoBtns->addWidget(dns_btn_);
     ql->addLayout(geoBtns, 1, 2);
