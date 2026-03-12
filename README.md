@@ -48,6 +48,54 @@ All operations run asynchronously — the UI stays responsive even on large file
 
 ---
 
+## Why `geosite:` and `geoip:` beat individual rules
+
+When configuring a proxy or VPN client, you have two approaches to routing traffic:
+
+**Manual rules — listing domains and IPs by hand:**
+```
+domain:youtube.com
+domain:googlevideo.com
+domain:ytimg.com
+domain:yt3.ggpht.com
+ip:142.250.0.0/15
+ip:172.217.0.0/16
+...
+```
+
+**Geo rules — one tag covers everything:**
+```
+geosite:youtube
+geoip:google
+```
+
+The difference is dramatic, and it matters in practice:
+
+### Coverage
+A single `geosite:youtube` tag covers **hundreds of domains** — not just `youtube.com`, but all CDN hostnames, thumbnail servers, static asset domains, and regional variants. Maintaining this list manually is a constant game of whack-a-mole: services add new subdomains, change CDN providers, and split traffic across new hostnames. Miss one, and your routing silently breaks for that resource.
+
+`geoip:ru` covers **over 100,000 IP/CIDR ranges** for Russia alone. Listing them manually in a config file is simply not feasible.
+
+### Maintenance
+Geo data files are maintained by the community and updated continuously. You update the file — your rules stay current automatically. With manual rules, every service change requires you to find and fix the issue yourself.
+
+### Rule matching speed
+Proxy clients like Xray-core and sing-box load `geosite.dat` into optimized in-memory structures (domain trees, tries). Matching against `geosite:google` with 3,000 domains is faster than linearly scanning 3,000 individual `domain:` entries, because lookups are O(log n) or O(k) where k is the domain label count.
+
+### Config readability
+A routing config with 20 geo rules is readable and auditable. A config with 10,000 individual domain and IP entries is not.
+
+### Where Geo Checker fits in
+The problem with geo rules is the opacity — you write `geosite:category-ads` and trust that it covers what you think it covers. Geo Checker removes that opacity:
+
+- **Before writing a rule** — check what's actually in the category
+- **Debugging broken routing** — enter the domain, see which tags match, verify your rule applies
+- **Choosing between rules** — compare `geosite:google` vs `geosite:googleapis` to avoid over-blocking
+- **Building firewall rules** — export IP ranges from `geoip:ru` directly to your firewall config
+- **Auditing your setup** — browse all available categories to discover tags you didn't know existed
+
+---
+
 ## Download
 
 Go to [**Releases**](https://github.com/Maxim-Root/Geo-Checker/releases) and download `GeoChecker.exe`.
