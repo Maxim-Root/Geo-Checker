@@ -30,6 +30,9 @@ std::vector<std::string> get_domains_from_geosite(const GeoSiteData* geosite, co
 // List all category names from geosite
 std::vector<std::string> list_geosite_categories(const GeoSiteData* geosite);
 
+// List all category names from geoip
+std::vector<std::string> list_geoip_categories(const GeoIPData* geoip);
+
 // Resolve domain to IPv4 addresses
 std::vector<std::string> resolve_domain_to_ip(const std::string& domain, double timeout_sec = 2.0);
 

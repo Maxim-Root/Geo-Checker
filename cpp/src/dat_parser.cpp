@@ -441,4 +441,12 @@ std::vector<std::string> list_geosite_categories(const GeoSiteData* geosite) {
     return result;
 }
 
+std::vector<std::string> list_geoip_categories(const GeoIPData* geoip) {
+    std::vector<std::string> result;
+    if (!geoip) return result;
+    for (size_t i = 0; i < geoip->entry_count(); ++i)
+        result.push_back(geoip->category(i));
+    return result;
+}
+
 } // namespace geochecker

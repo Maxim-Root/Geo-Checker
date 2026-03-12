@@ -41,6 +41,8 @@ private slots:
     void onGetDomains();
     void onGetIPsFromDNS();
     void onGetIPsFromGeoIP();
+    void onListGeositeCategories();
+    void onListGeoipCategories();
     void onCopyResult();
     void onSaveResult();
 
@@ -84,7 +86,7 @@ private:
     QString last_status_arg_;
 
     // Result data for language-aware rebuild
-    enum ResultKind { RK_None, RK_Categories, RK_Domains, RK_DnsIPs, RK_GeoIPs };
+    enum ResultKind { RK_None, RK_Categories, RK_Domains, RK_DnsIPs, RK_GeoIPs, RK_GeositeCats, RK_GeoipCats };
     ResultKind result_kind_[3] = {RK_None, RK_None, RK_None};
     QStringList result_items_[3];
     int result_extra_[3] = {0, 0, 0};
@@ -121,6 +123,8 @@ private:
     QPushButton* domains_btn_;
     QPushButton* dns_btn_;
     QPushButton* geoip_btn_;
+    QPushButton* all_geosite_cat_btn_;
+    QPushButton* all_geoip_cat_btn_;
     int active_tab_ = 0;
 
     QLineEdit* geosite_entry_;

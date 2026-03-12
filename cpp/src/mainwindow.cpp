@@ -192,6 +192,12 @@ static QMap<QString, QMap<QString, QString>> translations = []() {
     t["ru"]["getting_geoip_ranges"] = "Получаю диапазоны из geoip...";
     t["ru"]["ip_cidr_count"] = "IP/CIDR (%1):";
     t["ru"]["ranges_received"] = "Получено диапазонов: %1";
+    t["ru"]["all_geosite_categories"] = "Все категории geosite";
+    t["ru"]["all_geoip_categories"] = "Все категории geoip";
+    t["ru"]["listing_geosite_cats"] = "Получаю все категории geosite...";
+    t["ru"]["listing_geoip_cats"] = "Получаю все категории geoip...";
+    t["ru"]["geosite_cats_count"] = "Категорий geosite: %1";
+    t["ru"]["geoip_cats_count"] = "Категорий geoip: %1";
     t["ru"]["choose_geosite"] = "Выберите geosite.dat";
     t["ru"]["choose_geoip"] = "Выберите geoip.dat";
     t["ru"]["all_files"] = "Все файлы";
@@ -221,6 +227,12 @@ static QMap<QString, QMap<QString, QString>> translations = []() {
     t["en"]["tab_categories"] = "Categories";
     t["en"]["tab_domains"] = "Domains";
     t["en"]["tab_ip"] = "IP";
+    t["en"]["all_geosite_categories"] = "All geosite categories";
+    t["en"]["all_geoip_categories"] = "All geoip categories";
+    t["en"]["listing_geosite_cats"] = "Getting all geosite categories...";
+    t["en"]["listing_geoip_cats"] = "Getting all geoip categories...";
+    t["en"]["geosite_cats_count"] = "Geosite categories: %1";
+    t["en"]["geoip_cats_count"] = "Geoip categories: %1";
     t["en"]["choose_geosite"] = "Choose geosite.dat";
     t["en"]["choose_geoip"] = "Choose geoip.dat";
     t["en"]["all_files"] = "All files";
@@ -1346,6 +1358,22 @@ void MainWindow::buildUI() {
     geoip_btn_->setFocusPolicy(Qt::NoFocus);
     connect(geoip_btn_, &QPushButton::clicked, this, &MainWindow::onGetIPsFromGeoIP);
     ql->addWidget(geoip_btn_, 2, 2);
+    auto* allCatRow = new QHBoxLayout;
+    allCatRow->setSpacing(8);
+    all_geosite_cat_btn_ = new QPushButton(trKey("all_geosite_categories"));
+    all_geosite_cat_btn_->setObjectName("secondary");
+    all_geosite_cat_btn_->setFlat(true);
+    all_geosite_cat_btn_->setFocusPolicy(Qt::NoFocus);
+    connect(all_geosite_cat_btn_, &QPushButton::clicked, this, &MainWindow::onListGeositeCategories);
+    allCatRow->addWidget(all_geosite_cat_btn_);
+    all_geoip_cat_btn_ = new QPushButton(trKey("all_geoip_categories"));
+    all_geoip_cat_btn_->setObjectName("secondary");
+    all_geoip_cat_btn_->setFlat(true);
+    all_geoip_cat_btn_->setFocusPolicy(Qt::NoFocus);
+    connect(all_geoip_cat_btn_, &QPushButton::clicked, this, &MainWindow::onListGeoipCategories);
+    allCatRow->addWidget(all_geoip_cat_btn_);
+    ql->addLayout(allCatRow, 3, 0, 1, 3);
+
     ql->setColumnStretch(1, 1);
     mal->addWidget(queryCard);
 
@@ -1468,6 +1496,8 @@ void MainWindow::retranslateUi() {
     find_cat_btn_->setText(trKey("find_categories"));
     domains_btn_->setText(trKey("domains"));
     geoip_btn_->setText(trKey("ip_from_geoip"));
+    all_geosite_cat_btn_->setText(trKey("all_geosite_categories"));
+    all_geoip_cat_btn_->setText(trKey("all_geoip_categories"));
     tab_cat_btn_->setText(trKey("tab_categories"));
     tab_dom_btn_->setText(trKey("tab_domains"));
     tab_ip_btn_->setText(trKey("tab_ip"));
@@ -1662,6 +1692,8 @@ void MainWindow::rebuildResultText(int tab) {
     QString tr_dns_header = trKey("dns_result_header");
     QString tr_ips_not_found = trKey("ips_not_found");
     QString tr_ip_cidr = trKey("ip_cidr_count");
+    QString tr_geosite_cats = trKey("geosite_cats_count");
+    QString tr_geoip_cats = trKey("geoip_cats_count");
 
     // Build new header for this result kind
     auto buildHeader = [&]() -> QString {
@@ -1713,9 +1745,26 @@ void MainWindow::rebuildResultText(int tab) {
         output = tr_ip_cidr.arg(items.size()) + QStringLiteral("\n\n") + body;
         break;
     }
+    case RK_GeositeCats: {
+        QString body = items.isEmpty() ? tr_not_found : (items.join(QChar('\n')) + QChar('\n'));
+        output = tr_geosite_cats.arg(items.size()) + QStringLiteral("\n\n") + body;
+        break;
+    }
+    case RK_GeoipCats: {
+        QString body = items.isEmpty() ? tr_not_found : (items.join(QChar('\n')) + QChar('\n'));
+        output = tr_geoip_cats.arg(items.size()) + QStringLiteral("\n\n") + body;
+        break;
+    }
     default: return;
     }
-    if (te->toPlainText() != output) te->setPlainText(output);
+    if (te->toPlainText() != output) {
+        auto* vsb = te->verticalScrollBar();
+        auto* hsb = te->horizontalScrollBar();
+        int vpos = vsb->value(), hpos = hsb->value();
+        te->setPlainText(output);
+        vsb->setValue(vpos);
+        hsb->setValue(hpos);
+    }
     if (active_tab_ == tab) current_result_text_ = output;
 }
 
@@ -1758,6 +1807,8 @@ void MainWindow::setOperationButtonsEnabled(bool enabled) {
     domains_btn_->setEnabled(enabled);
     dns_btn_->setEnabled(enabled);
     geoip_btn_->setEnabled(enabled);
+    all_geosite_cat_btn_->setEnabled(enabled);
+    all_geoip_cat_btn_->setEnabled(enabled);
 }
 
 void MainWindow::runBackground(const std::function<std::any()>& work,
@@ -1981,6 +2032,74 @@ void MainWindow::onSaveResult() {
     if (path.isEmpty()) return;
     QFile f(path);
     if (f.open(QIODevice::WriteOnly | QIODevice::Text)) { f.write(current_result_text_.toUtf8()); setStatusTr("saved_to", path); }
+}
+
+void MainWindow::onListGeositeCategories() {
+    if (bg_busy_) return;
+    if (!ensureGeoSiteLoaded()) return;
+    setStatusTr("listing_geosite_cats", {}, true);
+    QString tr_count = trKey("geosite_cats_count"), tr_not_found = trKey("not_found");
+    auto t0 = std::chrono::steady_clock::now();
+    runBackground(
+        [geosite = geosite_data_.get(), tr_count, tr_not_found, t0]() -> std::any {
+            auto cats = list_geosite_categories(geosite);
+            auto t1 = std::chrono::steady_clock::now();
+            OpResult r;
+            r.count = static_cast<int>(cats.size());
+            r.items.reserve(r.count);
+            for (const auto& c : cats) r.items << QString::fromStdString(c);
+            QString body = r.items.isEmpty() ? tr_not_found : (r.items.join(QChar('\n')) + QChar('\n'));
+            r.output = tr_count.arg(r.count) + QStringLiteral("\n\n") + body;
+            geoLog("ListGeositeCats", QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()) + "ms count=" + QString::number(r.count));
+            return r;
+        },
+        [this](std::any result, const QString& err) {
+            if (!err.isEmpty()) { setStatusTr("error"); return; }
+            auto r = std::any_cast<OpResult>(std::move(result));
+            result_kind_[0] = RK_GeositeCats;
+            result_items_[0] = std::move(r.items);
+            result_categories_->setPlainText(r.output);
+            results_stack_->setCurrentIndex(0);
+            active_tab_ = 0;
+            current_result_text_ = r.output;
+            refreshTabStyles();
+            updateStats(r.count, -1, -1);
+            setStatusTr("geosite_cats_count", QString::number(r.count));
+        });
+}
+
+void MainWindow::onListGeoipCategories() {
+    if (bg_busy_) return;
+    if (!ensureGeoIPLoaded()) return;
+    setStatusTr("listing_geoip_cats", {}, true);
+    QString tr_count = trKey("geoip_cats_count"), tr_not_found = trKey("not_found");
+    auto t0 = std::chrono::steady_clock::now();
+    runBackground(
+        [geoip = geoip_data_.get(), tr_count, tr_not_found, t0]() -> std::any {
+            auto cats = list_geoip_categories(geoip);
+            auto t1 = std::chrono::steady_clock::now();
+            OpResult r;
+            r.count = static_cast<int>(cats.size());
+            r.items.reserve(r.count);
+            for (const auto& c : cats) r.items << QString::fromStdString(c);
+            QString body = r.items.isEmpty() ? tr_not_found : (r.items.join(QChar('\n')) + QChar('\n'));
+            r.output = tr_count.arg(r.count) + QStringLiteral("\n\n") + body;
+            geoLog("ListGeoipCats", QString::number(std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count()) + "ms count=" + QString::number(r.count));
+            return r;
+        },
+        [this](std::any result, const QString& err) {
+            if (!err.isEmpty()) { setStatusTr("error"); return; }
+            auto r = std::any_cast<OpResult>(std::move(result));
+            result_kind_[0] = RK_GeoipCats;
+            result_items_[0] = std::move(r.items);
+            result_categories_->setPlainText(r.output);
+            results_stack_->setCurrentIndex(0);
+            active_tab_ = 0;
+            current_result_text_ = r.output;
+            refreshTabStyles();
+            updateStats(r.count, -1, -1);
+            setStatusTr("geoip_cats_count", QString::number(r.count));
+        });
 }
 
 } // namespace geochecker
