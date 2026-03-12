@@ -83,7 +83,8 @@ protected:
     }
     void mousePressEvent(QMouseEvent* e) override {
         if (timer_ && timer_->isActive()) timer_->stop();
-        QPlainTextEdit::mousePressEvent(e);
+        if (e->button() != Qt::RightButton)
+            QPlainTextEdit::mousePressEvent(e);
     }
     void mouseReleaseEvent(QMouseEvent* e) override {
         QPlainTextEdit::mouseReleaseEvent(e);
@@ -1527,6 +1528,13 @@ void MainWindow::showEvent(QShowEvent* event) {
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
     if (event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::RightButton) {
+            if (auto* le = qobject_cast<QLineEdit*>(obj)) {
+                le->setFocus(); // ensure focus so paste/cut work
+                return true;   // block right-click so cursor doesn't move and clear selection
+            }
+        }
         auto* focused = focusWidget();
         if (focused && qobject_cast<QLineEdit*>(focused)) {
             auto* target = qobject_cast<QWidget*>(obj);
@@ -1541,8 +1549,48 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
             menu = te->createStandardContextMenu();
         else if (auto* te = qobject_cast<QPlainTextEdit*>(obj->parent()))
             menu = te->createStandardContextMenu();
-        else if (auto* le = qobject_cast<QLineEdit*>(obj))
+        else if (auto* le = qobject_cast<QLineEdit*>(obj)) {
+            // Save selection before menu may steal focus (Qt can deselect on FocusOut)
+            const int selStart = le->selectionStart();
+            const int selLen   = le->selectedText().length();
             menu = le->createStandardContextMenu();
+            // Re-wire Cut/Copy/Delete to restore selection before executing.
+            // Use text matching (shortcuts may not be set in context menus).
+            // Disconnect only triggered→le to keep Qt's internal menu connections intact.
+            for (auto* action : menu->actions()) {
+                if (action->isSeparator()) continue;
+                const QString t = action->text().remove('&').trimmed();
+                const bool isCut  = t.contains("Cut",    Qt::CaseInsensitive)
+                                 || t.contains(QString::fromUtf8("Вырезать"));
+                const bool isCopy = t.contains("Copy",   Qt::CaseInsensitive)
+                                 || t.contains(QString::fromUtf8("Копировать"));
+                const bool isDel   = t.contains("Delete", Qt::CaseInsensitive)
+                                  || t.contains(QString::fromUtf8("Удалить"));
+                const bool isPaste = t.contains("Paste",  Qt::CaseInsensitive)
+                                  || t.contains(QString::fromUtf8("Вставить"));
+                if (isCut) {
+                    QObject::disconnect(action, &QAction::triggered, le, nullptr);
+                    connect(action, &QAction::triggered, [le, selStart, selLen]() {
+                        le->setFocus(); le->setSelection(selStart, selLen); le->cut();
+                    });
+                } else if (isCopy) {
+                    QObject::disconnect(action, &QAction::triggered, le, nullptr);
+                    connect(action, &QAction::triggered, [le, selStart, selLen]() {
+                        le->setFocus(); le->setSelection(selStart, selLen); le->copy();
+                    });
+                } else if (isDel) {
+                    QObject::disconnect(action, &QAction::triggered, le, nullptr);
+                    connect(action, &QAction::triggered, [le, selStart, selLen]() {
+                        le->setFocus(); le->setSelection(selStart, selLen); le->del();
+                    });
+                } else if (isPaste) {
+                    QObject::disconnect(action, &QAction::triggered, le, nullptr);
+                    connect(action, &QAction::triggered, [le, selStart, selLen]() {
+                        le->setFocus(); le->setSelection(selStart, selLen); le->paste();
+                    });
+                }
+            }
+        }
         if (menu) {
             menu->setAttribute(Qt::WA_TranslucentBackground);
             menu->setWindowFlag(Qt::FramelessWindowHint);
